@@ -1,4 +1,4 @@
-name: Build and Push Streamlink Recorder Docker Image
+name: Build and Push tw-recorder Docker Image
 
 on:
   push:
@@ -19,21 +19,23 @@ on:
         default: ''
 
 env:
-  REGISTRY: ghcr.io
+  REGISTRY_GHCR: ghcr.io
+  REGISTRY_DOCKERHUB: docker.io
   IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/tw-recorder
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # Erlaubt das Erstellen von Releases
-      packages: write   # Erlaubt das Pushen in die GitHub Container Registry
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Nötig für vollständige Git-Historie und Tag-Prüfung
+          fetch-depth: 0
 
       - name: Version berechnen & Upstream-Änderungen prüfen
         id: bump_version
@@ -53,20 +55,59 @@ jobs:
           echo "Letzter eigener Tag: $LATEST_TAG ($TAG_COMMIT)"
           echo "Aktueller HEAD: $HEAD_COMMIT"
 
-          # 2. Upstream-Hashes / Versionen ermitteln
-          DEBIAN_DIGEST=$(docker manifest inspect debian:trixie-slim 2>/dev/null | grep -m 1 "digest" | awk -F '"' '{print $4}' || echo "")
-          FFMPEG_DIGEST=$(docker manifest inspect mwader/static-ffmpeg:latest 2>/dev/null | grep -m 1 "digest" | awk -F '"' '{print $4}' || echo "")
-          STREAMLINK_VERSION=$(curl -s https://pypi.org/pypi/streamlink/json | jq -r '.info.version' 2>/dev/null || echo "")
+          # 2. Upstream-Digests via Docker Hub API abfragen
+          echo "Frage Debian trixie-slim Digest von Docker Hub ab..."
+          DEBIAN_DIGEST=$(curl -s "https://registry.hub.docker.com/v2/library/debian/manifests/trixie-slim" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            2>/dev/null | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | awk -F '"' '{print $4}' || echo "")
+          
+          # Fallback mit jq
+          if [ -z "$DEBIAN_DIGEST" ]; then
+            DEBIAN_DIGEST=$(curl -s "https://registry.hub.docker.com/v2/library/debian/manifests/trixie-slim" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              2>/dev/null | jq -r '.config.digest' 2>/dev/null || echo "")
+          fi
+          
+          if [ -z "$DEBIAN_DIGEST" ]; then
+            echo "WARNUNG: Konnte Debian Digest nicht abrufen!"
+            DEBIAN_DIGEST="unknown"
+          fi
+          
+          echo "Debian trixie-slim Digest: $DEBIAN_DIGEST"
 
-          echo "Debian Digest: $DEBIAN_DIGEST"
-          echo "FFmpeg Digest: $FFMPEG_DIGEST"
-          echo "Streamlink PyPI Version: $STREAMLINK_VERSION"
+          echo "Frage mwader/static-ffmpeg Digest von Docker Hub ab..."
+          FFMPEG_DIGEST=$(curl -s "https://registry.hub.docker.com/v2/mwader/static-ffmpeg/manifests/latest" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            2>/dev/null | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | awk -F '"' '{print $4}' || echo "")
+          
+          if [ -z "$FFMPEG_DIGEST" ]; then
+            FFMPEG_DIGEST=$(curl -s "https://registry.hub.docker.com/v2/mwader/static-ffmpeg/manifests/latest" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              2>/dev/null | jq -r '.config.digest' 2>/dev/null || echo "")
+          fi
+          
+          if [ -z "$FFMPEG_DIGEST" ]; then
+            echo "WARNUNG: Konnte FFmpeg Digest nicht abrufen!"
+            FFMPEG_DIGEST="unknown"
+          fi
+          
+          echo "FFmpeg mwader/static-ffmpeg Digest: $FFMPEG_DIGEST"
 
-          # Fingerprint NUR auf Upstream-Quellen basieren (nicht auf HEAD_COMMIT)
+          echo "Frage neueste Streamlink-Version von PyPI ab..."
+          STREAMLINK_VERSION=$(curl -s https://pypi.org/pypi/streamlink/json 2>/dev/null | jq -r '.info.version' 2>/dev/null || echo "")
+          
+          if [ -z "$STREAMLINK_VERSION" ]; then
+            echo "WARNUNG: Konnte Streamlink Version nicht abrufen!"
+            STREAMLINK_VERSION="unknown"
+          fi
+          
+          echo "Streamlink (neueste PyPI Version): $STREAMLINK_VERSION"
+
+          # Kombinierter Fingerprint
           CURRENT_FINGERPRINT=$(echo "${DEBIAN_DIGEST}:${FFMPEG_DIGEST}:${STREAMLINK_VERSION}" | sha256sum | awk '{print $1}')
           echo "Aktueller System-Fingerprint: $CURRENT_FINGERPRINT"
 
-          # 3. Bei Cronjob den Fingerprint des letzten Releases abgleichen
+          # 3. Bei Cronjob: Fingerprint-Vergleich
           SKIP_BUILD="false"
           if [ "${{ github.event_name }}" = "schedule" ] && [ -n "$LATEST_TAG" ]; then
             LAST_RELEASE_BODY=$(gh release view "$LATEST_TAG" --json body -q ".body" 2>/dev/null || echo "")
@@ -75,7 +116,7 @@ jobs:
             echo "Letzter Release-Fingerprint: $LAST_FINGERPRINT"
 
             if [ -n "$LAST_FINGERPRINT" ] && [ "$CURRENT_FINGERPRINT" = "$LAST_FINGERPRINT" ]; then
-              echo "Keine Änderungen in Upstream-Quellen (Debian/FFmpeg/Streamlink PyPI). Abbruch."
+              echo "Keine Änderungen in Upstream-Quellen (Debian/FFmpeg/Streamlink). Abbruch."
               SKIP_BUILD="true"
             fi
           fi
@@ -109,16 +150,26 @@ jobs:
         if: steps.bump_version.outputs.skip_build != 'true'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.REGISTRY_GHCR }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in zu Docker Hub
+        if: steps.bump_version.outputs.skip_build != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker Metadaten extrahieren
         if: steps.bump_version.outputs.skip_build != 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE }}
           tags: |
             type=semver,pattern={{version}},value=${{ steps.bump_version.outputs.version }}
             type=raw,value=latest
@@ -153,6 +204,15 @@ jobs:
           name: Release ${{ steps.bump_version.outputs.version }}
           body: |
             Automated Release ${{ steps.bump_version.outputs.version }}
+            
+            Docker Hub: ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE }}
+            GitHub Container Registry: ${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}
+            
+            Upstream Dependencies:
+            - Debian: trixie-slim
+            - FFmpeg: mwader/static-ffmpeg:latest
+            - Streamlink: ${{ steps.bump_version.outputs.version }}
+            
             Fingerprint: ${{ steps.bump_version.outputs.fingerprint }}
           generate_release_notes: true
         env:
