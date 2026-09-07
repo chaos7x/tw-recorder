@@ -1,0 +1,59 @@
+# ==========================================
+# STUFE 0: Statische Binaries bereitstellen
+# ==========================================
+FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
+
+# ==========================================
+# STUFE 1: Schlankes Laufzeit-Image
+# ==========================================
+FROM debian:trixie-slim
+
+ARG VERSION
+ARG BUILD_DATE
+
+LABEL version="${VERSION}"
+LABEL build_date="${BUILD_DATE}"
+LABEL maintainer="Chaos7x"
+LABEL purpose="Twitch stream recording automation with Streamlink and static FFmpeg"
+
+# ------------------------------------------
+# LAYER 1: Binaries kopieren
+# ------------------------------------------
+COPY --from=ffmpeg-binaries /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
+
+# ------------------------------------------
+# LAYER 2: System-Pakete + Pip-Installation
+# ------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcom-err2 \
+    mc \
+    python3-pip \
+    ca-certificates \
+    && pip install --no-cache-dir --break-system-packages streamlink \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV HOME=/app
+
+# ------------------------------------------
+# LAYER 3: Verzeichnisse anlegen & vorbereiten
+# ------------------------------------------
+RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
+    && chmod 777 /storage /log
+
+# ------------------------------------------
+# LAYER 4: Skripte & Configs kopieren (Verzeichnisse existieren jetzt)
+# ------------------------------------------
+COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chmod=755 tw-recorder.py /usr/local/bin/tw-recorder
+COPY bashrc /etc/global.bashrc
+COPY recorder.conf.example /etc/tw-recorder/recorder.conf
+
+# ------------------------------------------
+# LAYER 5: Symlinks erstellen
+# ------------------------------------------
+RUN ln -s /etc/global.bashrc /tmp/.bashrc \
+    && ln -s /etc/global.bashrc /app/.bashrc
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

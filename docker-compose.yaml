@@ -1,0 +1,51 @@
+services:
+  tw-recorder:
+    image: ghcr.io/chaos7x/tw-recorder:${IMAGE_VERSION:-latest}
+    container_name: tw-recorder
+    hostname: tw-recorder
+    user: "11107:11108"
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Berlin
+      - STREAMLINK_LOGLEVEL=warning
+      - HOME=/tmp  # Hält Schreibzugriffe für Caches/Config aus dem :ro gemounteten /app fern
+    env_file:
+      - .env
+    volumes:
+    #  - app:/app:ro
+      - config:/etc/tw-recorder:ro
+      - storage-all:/storage
+
+# ==========================================
+# SEPARATE VOLUMES DEKLARATION
+# ==========================================
+volumes:
+  # --- Aktuell: Lokale Bind Mounts ---
+  app:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/app
+
+  config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/config
+
+  storage-all:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/videos
+
+  # --- Vorbereitung für spätere NFS-Mounts ---
+  # storage-all:
+  #   driver: local
+  #   driver_opts:
+  #     type: nfs
+  #     o: addr=192.168.1.100,rw,nolock,hard,nfsvers=4
+  #     device: ":/volume1/recordings"

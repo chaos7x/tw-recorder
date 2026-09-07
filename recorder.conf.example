@@ -1,0 +1,42 @@
+# ==============================================================================
+# Streamlink Recorder - Konfigurationsdatei
+# ==============================================================================
+
+[general]
+# Zielverzeichnis für die Aufnahmen
+# storage_dir = /storage
+
+# Prüf-Intervall in Sekunden zwischen den Abfragen
+# sleep_interval = 15
+
+# Dateinamensmuster für die finalen Aufnahmen
+# filename_pattern = {time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv
+
+
+[twitch]
+# Twitch Helix API Credentials (empfohlen für stabile Abfragen)
+# client_id = 
+# client_secret = 
+# user_token = 
+
+
+[streamlink]
+# Standard-Qualität für die Aufzeichnungen (z.B. best, 1080p60, 720p, worst)
+# stream_quality = best
+
+# Log-Level für Streamlink (debug, info, warning, error)
+# loglevel = info
+
+# Wartezeit/Retry bei Verbindungsfehlern in Sekunden
+# retry = 30
+
+# Webbrowser-Headless-Modus zur Umgehung von Captchas/Protection
+# webbrowser = false
+
+
+[channels]
+# Format: url_oder_channel = qualität
+# Beispiele:
+# https://twitch.tv/example = best
+# example = 1080p60
+# twitch.tv/anotherchannel = best

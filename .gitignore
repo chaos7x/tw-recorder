@@ -1,0 +1,25 @@
+# Logs, temporäre Daten und Medien ausschließen
+log/
+videos/
+oauth/
+tests/
+app/
+config/
+
+# Testdateien ausschließen
+anmeldung.py
+
+# Envireorment ausschließen
+.env
+
+# Backup- und Sicherungsdateien ausschließen
+*.sav
+*.bak
+*.new
+*.diff
+*.patch
+
+# Python Bytecode und Cache ausschließen
+__pycache__/
+*.pyc
+docker-compose.override.yaml
