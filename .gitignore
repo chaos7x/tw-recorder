@@ -23,3 +23,4 @@ anmeldung.py
 __pycache__/
 *.pyc
 docker-compose.override.yaml
+docker-compose.yaml
