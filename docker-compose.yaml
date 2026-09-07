@@ -26,21 +26,21 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/app
+      device: ./app
 
   config:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/config
+      device: ./config
 
   storage-all:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/videos
+      device: ./videos
 
   # --- Vorbereitung für spätere NFS-Mounts ---
   # storage-all:
