@@ -24,3 +24,4 @@ __pycache__/
 *.pyc
 docker-compose.override.yaml
 docker-compose.yaml
+.secrets
