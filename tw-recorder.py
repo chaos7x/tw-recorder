@@ -32,7 +32,7 @@ import re
 import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.0.2"
+__version__ = "1.0.0"
 
 # Ungepufferte Standard-Ausgabe erzwingen
 sys.stdout.reconfigure(line_buffering=True)
