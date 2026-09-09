@@ -8,14 +8,6 @@ FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
 # ==========================================
 FROM python:3-slim
 
-ARG VERSION
-ARG BUILD_DATE
-
-LABEL version="${VERSION}"
-LABEL build_date="${BUILD_DATE}"
-LABEL maintainer="Chaos7x"
-LABEL purpose="Twitch stream recording automation with Streamlink and static FFmpeg"
-
 # ------------------------------------------
 # LAYER 1: Binaries kopieren
 # ------------------------------------------
@@ -56,3 +48,11 @@ RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+ARG VERSION
+ARG BUILD_DATE
+
+LABEL version="${VERSION}"
+LABEL build_date="${BUILD_DATE}"
+LABEL maintainer="Chaos7x"
+LABEL purpose="Twitch stream recording automation with Streamlink and static FFmpeg"
