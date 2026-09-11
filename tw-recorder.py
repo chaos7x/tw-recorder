@@ -27,12 +27,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-import glob
 import re
 import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # Ungepufferte Standard-Ausgabe erzwingen
 sys.stdout.reconfigure(line_buffering=True)
@@ -404,7 +403,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 "-metadata", f"DATE={meta_date_compact}",
                                 "-metadata", f"creation_time={meta_date_compact}",
                                 "-map", "0:v",
-                                "-map", "0:a",
+                                "-map", "0:a?",
                                 "-c", "copy",
                                 str(final_target_path)
                             ]
@@ -416,6 +415,12 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 print(f"[INFO] ✅ Erfolgreich remuxed: {final_target_path.name}", flush=True)
                 except Exception as e:
                     print(f"[WARN] Fehler beim FFmpeg-Remuxing für {channel}: {e}", flush=True)
+
+            except Exception as e:
+                # Fängt z.B. Fehler beim Starten von streamlink (Popen) oder
+                # sonstige unerwartete Fehler ab, damit der Überwachungs-Thread
+                # für diesen Kanal nicht dauerhaft stirbt.
+                print(f"[WARN] Unerwarteter Fehler bei der Aufnahme für {channel}: {e}", flush=True)
 
             finally:
                 try:
