@@ -32,7 +32,7 @@ import re
 import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 # Ungepufferte Standard-Ausgabe erzwingen
 sys.stdout.reconfigure(line_buffering=True)
@@ -326,19 +326,27 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                             if not category:
                                 category = "NoCategory"
 
+
                             raw_title = parts[4].strip() if len(parts) > 4 else ""
                             full_title = raw_title if raw_title else "Untitled"
+
+                            # 1. Kürzel <3 durch ein echtes Unicode-Herz ersetzen
+                            full_title = full_title.replace("<3", "♥")
+
+                            # 2. Übrige einzelne < und > Zeichen ersatzlos entfernen
+                            full_title = re.sub(r'[<>]', '', full_title)
 
                             # Sanitize title: Bewahrt Unicode/Umlaute, filtert nur echte Pfad-Sonderzeichen
                             safe_title = "".join(
                                 char for char in full_title
-                                if unicodedata.category(char) not in {"So", "Sk", "Cf"}
+                                if unicodedata.category(char) not in {"So", "Sk", "Cf"} or char == "♥"
                             )
+
                             safe_title = re.sub(r'[/\\:*?"<>|]', '_', safe_title)
                             safe_title = re.sub(r'[\s_]+', '_', safe_title).strip('_')
                             if not safe_title:
                                 safe_title = "Untitled"
-                            
+
                             # Datum als datetime-Objekt parsen für volle Kompatibilität mit {time:...} Formaten
                             try:
                                 dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M")
@@ -364,11 +372,15 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
                             meta_date_compact = date_str.replace("-", "") if date_str else "00000000"
 
-                            clean_title_meta = "".join(c for c in full_title if c.isalnum() or c in (" ", "-", "_", "!", "?", ".")).strip()
+                            clean_title_meta = "".join(
+                                c for c in full_title 
+                                if c.isalnum() or c in (" ", "-", "_", "!", "?", ".", "♥")
+                            ).strip()
+
                             clean_title_meta = re.sub(r'\s+', ' ', clean_title_meta)
                             prefix = f"{parsed_channel} - {category}: "
                             suffix = f" ({date_str})"
-                             
+
                             raw_meta_title = f"{prefix}{clean_title_meta}{suffix}"
 
                             if len(raw_meta_title) > 95:
