@@ -38,10 +38,10 @@ RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
 # ------------------------------------------
 # LAYER 4: Skripte & Configs kopieren (Verzeichnisse existieren jetzt)
 # ------------------------------------------
+COPY --chmod=644 bashrc /etc/global.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=755 tw-recorder.py /usr/local/bin/tw-recorder
-COPY bashrc /etc/global.bashrc
-COPY recorder.conf.example /etc/tw-recorder/recorder.conf
+COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
 
 # ------------------------------------------
 # LAYER 5: Symlinks erstellen
