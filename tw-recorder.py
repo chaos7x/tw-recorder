@@ -311,14 +311,29 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                         if (time.time() - latest_file.stat().st_mtime) < 300:
 
                             full_stem = latest_file.stem
-                            # Max. 4 Trennungen, damit Unterstriche im Titel intakt bleiben
-                            parts = full_stem.split("_", 4)
 
-                            date_str = parts[0] if len(parts) > 0 and parts[0] else "0000-00-00"
-                            time_str = parts[1] if len(parts) > 1 and parts[1] else "00-00"
-                            parsed_channel = parts[2] if len(parts) > 2 and parts[2] else channel
+                            # Zuerst Datum und Uhrzeit abtrennen (enthalten nie
+                            # Unterstriche, nur Bindestriche -> sicher via split(_, 2))
+                            dt_parts = full_stem.split("_", 2)
+                            date_str = dt_parts[0] if len(dt_parts) > 0 and dt_parts[0] else "0000-00-00"
+                            time_str = dt_parts[1] if len(dt_parts) > 1 and dt_parts[1] else "00-00"
+                            remainder = dt_parts[2] if len(dt_parts) > 2 else ""
 
-                            raw_category = parts[3] if len(parts) > 3 else ""
+                            # Kanalname ist bereits bekannt (aus der URL) und damit
+                            # zuverlässiger als ein Re-Parsing des Dateinamens per
+                            # Unterstrich-Split (Twitch-Namen dürfen "_" enthalten,
+                            # was das alte Split-Verfahren fälschlich abschnitt).
+                            parsed_channel = channel
+                            channel_prefix = f"{channel}_"
+                            if remainder.startswith(channel_prefix):
+                                rest_after_channel = remainder[len(channel_prefix):]
+                            else:
+                                # Unerwartetes Format (z.B. Streamlink hat den Namen
+                                # anders geschrieben) -> best effort wie zuvor
+                                rest_after_channel = remainder
+
+                            cat_title_parts = rest_after_channel.split("_", 1)
+                            raw_category = cat_title_parts[0] if len(cat_title_parts) > 0 else ""
                             category = raw_category.strip() if raw_category.strip() else "NoCategory"
                             category = re.sub(r'[/\\:*?"<>|]', '_', category)
                             category = re.sub(r'[\s_]+', '_', category).strip('_')
@@ -326,7 +341,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 category = "NoCategory"
 
 
-                            raw_title = parts[4].strip() if len(parts) > 4 else ""
+                            raw_title = cat_title_parts[1].strip() if len(cat_title_parts) > 1 else ""
                             full_title = raw_title if raw_title else "Untitled"
 
                             # 1. Kürzel <3 durch ein echtes Unicode-Herz ersetzen
