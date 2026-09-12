@@ -33,6 +33,16 @@
 # Webbrowser-Headless-Modus zur Umgehung von Captchas/Protection
 # webbrowser = false
 
+# Aufnahme automatisch splitten, wenn sich der Twitch-Titel oder die Kategorie
+# während der Aufnahme ändert (benötigt Twitch API Credentials, siehe [twitch])
+# Standardmäßig deaktiviert - erst testen, dann aktivieren!
+# split_on_title_change = false
+
+# Intervall in Sekunden, in dem Titel/Kategorie während der Aufnahme über die
+# Twitch Helix API geprüft werden (kleines Rate-Limit-Budget: 1 Punkt pro
+# Aufruf, Standard-Limit 800 Punkte/Minute - 90s sind unbedenklich)
+# title_check_interval = 90
+
 
 [channels]
 # Format: url_oder_channel = qualität
