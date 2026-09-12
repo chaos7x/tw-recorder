@@ -43,6 +43,12 @@
 # Aufruf, Standard-Limit 800 Punkte/Minute - 90s sind unbedenklich)
 # title_check_interval = 90
 
+# ionice (Idle-I/O-Klasse) für den FFmpeg-Remux nutzen, damit der Remux
+# laufende Aufnahmen auf HDDs nicht ausbremst, wenn mehrere Kanäle
+# gleichzeitig aufgenommen werden. Wird automatisch ignoriert, falls
+# ionice auf dem System nicht verfügbar ist.
+# use_ionice = true
+
 
 [channels]
 # Format: url_oder_channel = qualität
