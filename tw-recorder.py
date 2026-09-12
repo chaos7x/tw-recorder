@@ -28,10 +28,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 import re
+import shutil
 import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.0.4"
+__version__ = "1.1.0"
 
 # Ungepufferte Standard-Ausgabe erzwingen
 sys.stdout.reconfigure(line_buffering=True)
@@ -142,6 +143,15 @@ def load_config():
         fallback=os.getenv("TITLE_CHECK_INTERVAL", "90")
     ))
 
+    # ionice für den FFmpeg-Remux nutzen (Idle-I/O-Klasse), damit der Remux
+    # laufende Aufnahmen auf HDDs nicht ausbremst (nur relevant bei mehreren
+    # gleichzeitigen Kanälen). Wird automatisch ignoriert, falls ionice nicht
+    # installiert ist (z.B. auf Nicht-Linux-Systemen).
+    use_ionice = config.getboolean(
+        "streamlink", "use_ionice",
+        fallback=os.getenv("USE_IONICE", "true").lower() == "true"
+    )
+
     return {
         "storage_dir": storage_dir,
         "sleep_interval": sleep_interval,
@@ -155,6 +165,7 @@ def load_config():
         "webbrowser": webbrowser,
         "split_on_title_change": split_on_title_change,
         "title_check_interval": title_check_interval,
+        "use_ionice": use_ionice,
         "config_obj": config
     }
 
@@ -560,6 +571,12 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 "-c", "copy",
                                 str(final_target_path)
                             ]
+
+                            if cfg["use_ionice"] and shutil.which("ionice"):
+                                # Idle-I/O-Klasse (-c3): Remux bekommt nur Platten-
+                                # I/O, wenn gerade nichts anderes (v.a. laufende
+                                # Aufnahmen auf anderen Kanälen) es benötigt.
+                                ffmpeg_cmd = ["ionice", "-c3"] + ffmpeg_cmd
 
                             ff_proc = subprocess.run(ffmpeg_cmd)
                             if ff_proc.returncode == 0:
