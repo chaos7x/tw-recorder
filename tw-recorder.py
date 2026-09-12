@@ -132,6 +132,16 @@ def load_config():
     streamlink_retry = int(config.get("streamlink", "retry", fallback=os.getenv("STREAMLINK_RETRY", "30")))
     webbrowser = config.getboolean("streamlink", "webbrowser", fallback=os.getenv("STREAMLINK_WEBBROWSER", "false").lower() == "true")
 
+    # Split der Aufnahme bei Titel-/Kategorieänderung (nur mit Twitch API möglich)
+    split_on_title_change = config.getboolean(
+        "streamlink", "split_on_title_change",
+        fallback=os.getenv("SPLIT_ON_TITLE_CHANGE", "false").lower() == "true"
+    )
+    title_check_interval = int(config.get(
+        "streamlink", "title_check_interval",
+        fallback=os.getenv("TITLE_CHECK_INTERVAL", "90")
+    ))
+
     return {
         "storage_dir": storage_dir,
         "sleep_interval": sleep_interval,
@@ -143,6 +153,8 @@ def load_config():
         "streamlink_loglevel": streamlink_loglevel,
         "streamlink_retry": streamlink_retry,
         "webbrowser": webbrowser,
+        "split_on_title_change": split_on_title_change,
+        "title_check_interval": title_check_interval,
         "config_obj": config
     }
 
@@ -247,6 +259,69 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
     return proc.returncode == 0
 
 
+def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
+    """
+    Fragt via Twitch Helix API Titel/Kategorie des aktuell laufenden Streams ab.
+    Wird für die Split-Erkennung bei Titel-/Kategorieänderung genutzt.
+
+    Gibt bei Erfolg {"online": bool, "title": str, "category": str} zurück.
+    Gibt None zurück, wenn keine Twitch-API-Zugangsdaten vorhanden sind, die
+    Plattform kein Twitch ist, oder die API gerade nicht erreichbar ist.
+    Verursacht nur 1 zusätzlichen Helix-API-Aufruf pro Aufruf (kostet 1 Punkt
+    des 800-Punkte/Minute-Limits) - bei üblichen Prüfintervallen (>= 60s)
+    vernachlässigbar.
+    """
+    global api_unavailable_until
+
+    client_id = cfg["client_id"]
+    client_secret = cfg["client_secret"]
+
+    if not ("twitch.tv" in url and client_id and client_secret):
+        return None
+
+    channel = url.rstrip("/").split("/")[-1].lower()
+    with api_warning_lock:
+        api_available = time.monotonic() >= api_unavailable_until
+
+    token = get_app_access_token(client_id, client_secret) if api_available else None
+    if not token:
+        return None
+
+    api_url = f"https://api.twitch.tv/helix/streams?user_login={channel}"
+    headers = {
+        "Client-ID": client_id,
+        "Authorization": f"Bearer {token}"
+    }
+    req = urllib.request.Request(api_url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            streams = data.get("data", [])
+            if streams and streams[0].get("type") == "live":
+                return {
+                    "online": True,
+                    "title": streams[0].get("title") or "",
+                    "category": streams[0].get("game_name") or "",
+                }
+            return {"online": False, "title": "", "category": ""}
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and retry:
+            get_app_access_token(client_id, client_secret, force_refresh=True)
+            return get_stream_info(url, cfg, retry=False)
+        print(f"[WARN] Twitch API HTTP-Fehler {e.code} für {channel} (Titel-Check)", flush=True)
+        return None
+    except Exception as e:
+        with api_warning_lock:
+            api_unavailable_until = time.monotonic() + 60
+            print(
+                f"[WARN] Twitch-API vorübergehend nicht erreichbar ({e}). "
+                "Titel-Split-Erkennung pausiert für 60 Sekunden.",
+                flush=True
+            )
+        return None
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
@@ -274,6 +349,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                 time.sleep(sleep_interval)
                 continue
 
+            title_split_triggered = False
             try:
                 print(f"[INFO] 🔴 Starte Aufzeichnung für Kanal: {channel}", flush=True)
 
@@ -291,6 +367,21 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
                 proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
 
+                split_on_title_change = cfg["split_on_title_change"]
+                title_check_interval = cfg["title_check_interval"]
+
+                # Aktuellen Titel/Kategorie als Referenz für die Split-Erkennung merken
+                last_title = None
+                last_category = None
+                if split_on_title_change:
+                    initial_info = get_stream_info(url, cfg)
+                    if initial_info and initial_info["online"]:
+                        last_title = initial_info["title"]
+                        last_category = initial_info["category"]
+                last_title_check = time.monotonic()
+                last_cfg_reload = time.monotonic()
+                last_cfg_hash, _ = get_config_hash()
+
                 while proc.poll() is None:
                     if stop_event.is_set():
                         proc.terminate()
@@ -299,6 +390,52 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                         except subprocess.TimeoutExpired:
                             proc.kill()
                         break
+
+                    # Nutzt denselben Hash-Mechanismus wie der Daemon (sync_processes),
+                    # um Config-Dateien nur bei tatsächlicher Änderung neu einzulesen,
+                    # statt sie alle paar Sekunden blind neu zu parsen. So greifen
+                    # Änderungen an split_on_title_change/title_check_interval sofort,
+                    # auch während einer laufenden (u.U. mehrstündigen) Aufnahme.
+                    if (time.monotonic() - last_cfg_reload) >= sleep_interval:
+                        last_cfg_reload = time.monotonic()
+                        current_cfg_hash, _ = get_config_hash()
+                        if current_cfg_hash != last_cfg_hash:
+                            last_cfg_hash = current_cfg_hash
+                            cfg = load_config()
+                            split_on_title_change = cfg["split_on_title_change"]
+                            title_check_interval = cfg["title_check_interval"]
+                            if split_on_title_change and last_title is None:
+                                # Feature wurde gerade erst aktiviert -> Referenz-
+                                # Titel/Kategorie jetzt nachträglich ermitteln
+                                initial_info = get_stream_info(url, cfg)
+                                if initial_info and initial_info["online"]:
+                                    last_title = initial_info["title"]
+                                    last_category = initial_info["category"]
+
+                    if (
+                        split_on_title_change
+                        and last_title is not None
+                        and (time.monotonic() - last_title_check) >= title_check_interval
+                    ):
+                        last_title_check = time.monotonic()
+                        info = get_stream_info(url, cfg)
+                        if info and info["online"] and (
+                            info["title"] != last_title or info["category"] != last_category
+                        ):
+                            print(
+                                f"[INFO] ✂️ Titel-/Kategorieänderung erkannt für {channel} "
+                                f"('{last_title}'/'{last_category}' -> "
+                                f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme.",
+                                flush=True
+                            )
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                            title_split_triggered = True
+                            break
+
                     time.sleep(1)
 
                 print(f"[INFO] ⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...", flush=True)
@@ -449,6 +586,12 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
             if stop_event.is_set():
                 return
+
+            if title_split_triggered:
+                # Stream läuft nachweislich weiter (nur Titel/Kategorie geändert) ->
+                # sofort neue Aufnahme starten, keine künstliche Pause nötig.
+                print(f"[INFO] ▶️ Starte nächsten Aufnahme-Abschnitt für Kanal: {channel}", flush=True)
+                continue
 
             time.sleep(30)
 
