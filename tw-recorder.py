@@ -415,6 +415,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 "-metadata", f"TITLE={meta_title}",
                                 "-metadata", f"COMMENT={meta_comment}",
                                 "-metadata", f"ARTIST={parsed_channel}",
+                                "-metadata", f"PURL=https://twitch.tv/{parsed_channel}",
                                 "-metadata", f"DATE={meta_date_compact}",
                                 "-metadata", f"creation_time={meta_date_compact}",
                                 "-map", "0:v",
