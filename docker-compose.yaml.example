@@ -13,6 +13,7 @@ services:
       - .env
     volumes:
     #  - app:/app:ro
+    #  - log:/log
       - config:/etc/tw-recorder:ro
       - storage-all:/storage
 
@@ -34,6 +35,13 @@ volumes:
       type: none
       o: bind
       device: ./config
+
+  log:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./log
 
   storage-all:
     driver: local
