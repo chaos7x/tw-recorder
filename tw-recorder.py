@@ -16,6 +16,8 @@ import configparser
 import fcntl
 import hashlib
 import json
+import logging
+import logging.handlers
 import os
 import signal
 import subprocess
@@ -33,6 +35,9 @@ import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
 __version__ = "1.1.0"
+
+APP_NAME = "tw-recorder"
+logger = logging.getLogger(APP_NAME)
 
 # Ungepufferte Standard-Ausgabe erzwingen
 sys.stdout.reconfigure(line_buffering=True)
@@ -57,6 +62,163 @@ token_lock = threading.Lock()
 # Ausfall des Twitch-Helix-Endpunkts.
 api_unavailable_until = 0.0
 api_warning_lock = threading.Lock()
+
+
+def _is_syslog_daemon_running() -> bool:
+    """
+    Prüft ohne Zusatzabhängigkeiten (kein subprocess, kein psutil), ob ein
+    klassischer Syslog-Daemon (rsyslogd, syslog-ng, syslogd) läuft, indem
+    /proc nach Prozessen mit passendem Namen durchsucht wird (Prozessname
+    aus /proc/<pid>/comm). Auf Systemen ohne /proc (z.B. nicht-Linux)
+    liefert die Prüfung konservativ False.
+    """
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return False
+
+    known_daemons = {"rsyslogd", "syslog-ng", "syslogd"}
+
+    try:
+        pid_dirs = [p for p in proc_dir.iterdir() if p.name.isdigit()]
+    except Exception:
+        return False
+
+    for pid_dir in pid_dirs:
+        try:
+            comm = (pid_dir / "comm").read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            # Prozess kann zwischen listdir() und read_text() beendet worden
+            # sein, oder /comm ist nicht lesbar - einfach überspringen.
+            continue
+        if comm in known_daemons:
+            return True
+
+    return False
+
+
+def _resolve_log_file_path(app_name: str, explicit_path: str) -> Path:
+    """
+    Ermittelt den Ziel-Pfad für die rotierende Logdatei nach Priorität:
+    1. Explizite Konfiguration (Config-Datei oder ENV-Variable LOG_FILE)
+    2. /log/<app_name>.log, falls /log existiert (Docker-Volume-Konvention)
+    3. /var/log/<app_name>/<app_name>.log, falls anlegbar/beschreibbar (FHS)
+    4. Fallback: Datei im Programmverzeichnis selbst
+    """
+    if explicit_path:
+        return Path(explicit_path)
+
+    docker_log_dir = Path("/log")
+    if docker_log_dir.is_dir():
+        return docker_log_dir / f"{app_name}.log"
+
+    var_log_dir = Path(f"/var/log/{app_name}")
+    try:
+        var_log_dir.mkdir(parents=True, exist_ok=True)
+        if os.access(var_log_dir, os.W_OK):
+            return var_log_dir / f"{app_name}.log"
+    except Exception:
+        pass
+
+    try:
+        script_dir = Path(__file__).resolve().parent
+    except Exception:
+        script_dir = Path.cwd()
+    return script_dir / f"{app_name}.log"
+
+
+def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.Logger:
+    """
+    Konfiguriert das Logging der gesamten Anwendung (Root-Logger):
+    - Immer ein stdout-Handler, damit journald/systemd/docker logs die
+      Ausgabe unabhängig von der Betriebsart automatisch erfassen.
+    - Zusätzlich ein rotierender Datei-Handler (max. 10 MB, 5 Backups),
+      ausgelöst durch: explizite log_file-Konfiguration, ein vorhandenes
+      /log-Verzeichnis (Docker-Volume-Konvention), oder einen tatsächlich
+      laufenden klassischen Syslog-Daemon. Ohne einen dieser Gründe läuft
+      die Ausgabe ohnehin bereits über journald (stdout-Erfassung) - eine
+      eigene Logdatei wäre dann nur doppelte Datenhaltung ohne Mehrwert.
+    - Log-Level per ENV-Variable DEBUG steuerbar (true/yes/1, case-insensitive).
+    - HTTP-Bibliotheks-Logger werden unabhängig vom eigenen Level auf
+      WARNING gedrosselt, damit Connection-Pool-Rauschen nicht das
+      eigentliche Debug-Logging zumüllt.
+    """
+    debug_enabled = os.getenv("DEBUG", "").strip().lower() in ("true", "yes", "1")
+    level = logging.DEBUG if debug_enabled else logging.INFO
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    # Bestehende Handler entfernen, damit setup_logging() idempotent
+    # aufgerufen werden kann, ohne doppelte Log-Zeilen zu erzeugen.
+    for h in list(root_logger.handlers):
+        root_logger.removeHandler(h)
+
+    formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(formatter)
+    root_logger.addHandler(stdout_handler)
+
+    active_handlers_desc = ["stdout"]
+
+    explicit_path = ""
+    if cfg is not None:
+        explicit_path = str(cfg.get("log_file") or "").strip()
+    if not explicit_path:
+        explicit_path = os.getenv("LOG_FILE", "").strip()
+
+    docker_log_dir_present = Path("/log").is_dir()
+    syslog_running = _is_syslog_daemon_running()
+
+    # Datei-Logging wird ausgelöst durch (a) explizite Konfiguration, (b) die
+    # Docker-Volume-Konvention /log (klares Signal, dass Logdateien gewünscht
+    # sind - unabhängig davon, ob im Container selbst ein Syslog-Daemon läuft,
+    # was in Containern ohnehin unüblich ist), oder (c) einen tatsächlich
+    # laufenden klassischen Syslog-Daemon auf Bare-Metal-/systemd-Systemen.
+    # Ohne einen dieser drei Gründe läuft die Ausgabe ohnehin schon über
+    # journald/docker logs (stdout-Erfassung) - eine eigene Logdatei wäre
+    # dann nur doppelte Datenhaltung ohne Mehrwert.
+    if explicit_path:
+        trigger_reason = "explizite log_file-Konfiguration"
+    elif docker_log_dir_present:
+        trigger_reason = "/log-Verzeichnis gefunden (Docker-Volume-Konvention)"
+    elif syslog_running:
+        trigger_reason = "Syslog-Daemon erkannt"
+    else:
+        trigger_reason = None
+
+    if trigger_reason is not None:
+        log_path = _resolve_log_file_path(app_name, explicit_path)
+
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.handlers.RotatingFileHandler(
+                str(log_path), maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+            )
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            active_handlers_desc.append(f"Datei ({log_path})")
+            reason = f"{trigger_reason}"
+        except Exception as e:
+            reason = f"{trigger_reason}, aber Datei-Handler konnte nicht eingerichtet werden ({e})"
+    else:
+        reason = "Kein Syslog-Daemon/-Log-Verzeichnis/-Config erkannt - Logging nur nach stdout (journald erfasst das bereits)"
+
+    # HTTP-Bibliotheks-Rauschen unabhängig vom eigenen Log-Level drosseln
+    # (z.B. "Resetting dropped connection" o.ä.), falls entsprechende
+    # Abhängigkeiten im Projekt zum Einsatz kommen.
+    for noisy_logger_name in ("urllib3", "urllib3.connectionpool", "requests", "httpx"):
+        logging.getLogger(noisy_logger_name).setLevel(logging.WARNING)
+
+    logger.info(
+        f"Logging initialisiert - Level={logging.getLevelName(level)}, "
+        f"aktive Handler: {', '.join(active_handlers_desc)}. {reason}."
+    )
+
+    return logger
 
 
 def get_config_files_state() -> dict:
@@ -115,12 +277,13 @@ def load_config():
         try:
             config.read(config_files, encoding="utf-8")
         except Exception as e:
-            print(f"[WARN] Fehler beim Lesen der Config-Dateien: {e}", flush=True)
+            logger.warning(f"Fehler beim Lesen der Config-Dateien: {e}")
 
     # General / Output Settings
     storage_dir = Path(config.get("general", "storage_dir", fallback=os.getenv("STORAGE_DIR", "/storage")))
     sleep_interval = int(config.get("general", "sleep_interval", fallback=os.getenv("SLEEP_INTERVAL", "15")))
     filename_pattern = config.get("general", "filename_pattern", fallback=os.getenv("OUTPUT_FILENAME_PATTERN", "{time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv"))
+    log_file = config.get("general", "log_file", fallback=os.getenv("LOG_FILE", "")).strip()
 
     # Twitch Credentials
     client_id = config.get("twitch", "client_id", fallback=os.getenv("CLIENT_ID", os.getenv("TWITCH_CLIENT_ID", ""))).strip()
@@ -156,6 +319,7 @@ def load_config():
         "storage_dir": storage_dir,
         "sleep_interval": sleep_interval,
         "filename_pattern": filename_pattern,
+        "log_file": log_file,
         "client_id": client_id,
         "client_secret": client_secret,
         "user_token": user_token,
@@ -202,7 +366,7 @@ def get_app_access_token(client_id: str, client_secret: str, force_refresh: bool
                 token_expires_at = time.time() + data.get("expires_in", 3600) - 60
                 return app_token
         except Exception as e:
-            print(f"[WARN] Fehler beim Twitch-Token-Abruf: {e}", flush=True)
+            logger.warning(f"Fehler beim Twitch-Token-Abruf: {e}")
             app_token = None
             return None
 
@@ -247,14 +411,13 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
                 if e.code == 401 and retry:
                     get_app_access_token(client_id, client_secret, force_refresh=True)
                     return check_stream_online(url, cfg, retry=False)
-                print(f"[WARN] Twitch API HTTP-Fehler {e.code} für {channel}", flush=True)
+                logger.warning(f"Twitch API HTTP-Fehler {e.code} für {channel}")
             except Exception as e:
                 with api_warning_lock:
                     api_unavailable_until = time.monotonic() + 60
-                    print(
-                        f"[WARN] Twitch-API vorübergehend nicht erreichbar ({e}). "
-                        "Verwende Streamlink-Fallback für 60 Sekunden.",
-                        flush=True
+                    logger.warning(
+                        f"Twitch-API vorübergehend nicht erreichbar ({e}). "
+                        "Verwende Streamlink-Fallback für 60 Sekunden."
                     )
 
     # Fallback für Plattformen außer Twitch oder fehlende Keys
@@ -320,15 +483,14 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
         if e.code == 401 and retry:
             get_app_access_token(client_id, client_secret, force_refresh=True)
             return get_stream_info(url, cfg, retry=False)
-        print(f"[WARN] Twitch API HTTP-Fehler {e.code} für {channel} (Titel-Check)", flush=True)
+        logger.warning(f"Twitch API HTTP-Fehler {e.code} für {channel} (Titel-Check)")
         return None
     except Exception as e:
         with api_warning_lock:
             api_unavailable_until = time.monotonic() + 60
-            print(
-                f"[WARN] Twitch-API vorübergehend nicht erreichbar ({e}). "
-                "Titel-Split-Erkennung pausiert für 60 Sekunden.",
-                flush=True
+            logger.warning(
+                f"Twitch-API vorübergehend nicht erreichbar ({e}). "
+                "Titel-Split-Erkennung pausiert für 60 Sekunden."
             )
         return None
 
@@ -362,7 +524,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
             title_split_triggered = False
             try:
-                print(f"[INFO] 🔴 Starte Aufzeichnung für Kanal: {channel}", flush=True)
+                logger.info(f"🔴 Starte Aufzeichnung für Kanal: {channel}")
 
                 cmd = [
                     "streamlink",
@@ -375,6 +537,10 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                     url,
                     quality
                 ])
+
+                # Enthält ggf. den OAuth-Token (--twitch-api-header) - daher
+                # ausschließlich auf DEBUG-Level, nie auf INFO oder höher.
+                logger.debug(f"Streamlink-Kommando für {channel}: {cmd}")
 
                 proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
 
@@ -433,11 +599,10 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                         if info and info["online"] and (
                             info["title"] != last_title or info["category"] != last_category
                         ):
-                            print(
-                                f"[INFO] ✂️ Titel-/Kategorieänderung erkannt für {channel} "
+                            logger.info(
+                                f"✂️ Titel-/Kategorieänderung erkannt für {channel} "
                                 f"('{last_title}'/'{last_category}' -> "
-                                f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme.",
-                                flush=True
+                                f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme."
                             )
                             proc.terminate()
                             try:
@@ -449,7 +614,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
                     time.sleep(1)
 
-                print(f"[INFO] ⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...", flush=True)
+                logger.info(f"⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...")
                 time.sleep(2)
 
                 try:
@@ -524,7 +689,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                     category=category
                                 )
                             except (KeyError, ValueError) as e:
-                                print(f"[WARN] Fehler beim Formatieren von filename_pattern ({e}). Nutze Fallback-Name.", flush=True)
+                                logger.warning(f"Fehler beim Formatieren von filename_pattern ({e}). Nutze Fallback-Name.")
                                 target_filename = f"{date_str}_{time_str}_{parsed_channel}_{category}_{safe_title}.mkv"
 
                             # Falls das Pattern keine Endung hat, erzwinge .mkv
@@ -582,15 +747,15 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                             if ff_proc.returncode == 0:
                                 if latest_file.exists():
                                     latest_file.unlink()
-                                print(f"[INFO] ✅ Erfolgreich remuxed: {final_target_path.name}", flush=True)
+                                logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
                 except Exception as e:
-                    print(f"[WARN] Fehler beim FFmpeg-Remuxing für {channel}: {e}", flush=True)
+                    logger.warning(f"Fehler beim FFmpeg-Remuxing für {channel}: {e}")
 
             except Exception as e:
                 # Fängt z.B. Fehler beim Starten von streamlink (Popen) oder
                 # sonstige unerwartete Fehler ab, damit der Überwachungs-Thread
                 # für diesen Kanal nicht dauerhaft stirbt.
-                print(f"[WARN] Unerwarteter Fehler bei der Aufnahme für {channel}: {e}", flush=True)
+                logger.warning(f"Unerwarteter Fehler bei der Aufnahme für {channel}: {e}")
 
             finally:
                 try:
@@ -607,7 +772,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             if title_split_triggered:
                 # Stream läuft nachweislich weiter (nur Titel/Kategorie geändert) ->
                 # sofort neue Aufnahme starten, keine künstliche Pause nötig.
-                print(f"[INFO] ▶️ Starte nächsten Aufnahme-Abschnitt für Kanal: {channel}", flush=True)
+                logger.info(f"▶️ Starte nächsten Aufnahme-Abschnitt für Kanal: {channel}")
                 continue
 
             time.sleep(30)
@@ -651,13 +816,13 @@ def parse_streamers():
 
 def sync_processes():
     current_streamers = parse_streamers()
-    print(f"[INFO] {len(current_streamers)} Streamer in Config gefunden.", flush=True)
+    logger.info(f"{len(current_streamers)} Streamer in Config gefunden.")
 
     # 1. Entfernte Streamer stoppen
     for url in list(running_threads.keys()):
         if url not in current_streamers:
             channel = url.rstrip("/").split("/")[-1]
-            print(f"[INFO] Stoppe Überwachung für Kanal: {channel}", flush=True)
+            logger.info(f"Stoppe Überwachung für Kanal: {channel}")
             thread, stop_event = running_threads.pop(url)
             stop_event.set()
 
@@ -669,7 +834,7 @@ def sync_processes():
                 continue
 
         channel = url.rstrip("/").split("/")[-1]
-        print(f"[INFO] Starte Überwachung für Kanal: {channel}", flush=True)
+        logger.info(f"Starte Überwachung für Kanal: {channel}")
         stop_event = threading.Event()
         thread = threading.Thread(
             target=record_loop,
@@ -681,7 +846,7 @@ def sync_processes():
 
 
 def shutdown_handler(signum, frame):
-    print("\n[INFO] Signal empfangen, beende alle Aufnahmen...", flush=True)
+    logger.info("Signal empfangen, beende alle Aufnahmen...")
     threads = []
     for url, (thread, stop_event) in running_threads.items():
         stop_event.set()
@@ -699,7 +864,7 @@ def run_daemon():
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    print(f"[INFO] Starte Streamlink-Manager (Config: {CONFIG_FILE})...", flush=True)
+    logger.info(f"Starte Streamlink-Manager (Config: {CONFIG_FILE})...")
 
     # Initialen Zustand beim Start erfassen
     LAST_CONFIG_HASH, LAST_FILES_STATE = get_config_hash()
@@ -724,7 +889,7 @@ def run_daemon():
                     changed_files.append(f"gelöscht: {path.name}")
 
             changes_str = ", ".join(changed_files) if changed_files else "Konfiguration"
-            print(f"[INFO] 🔄 Konfigurationsänderung erkannt ({changes_str}). Synchronisiere...", flush=True)
+            logger.info(f"🔄 Konfigurationsänderung erkannt ({changes_str}). Synchronisiere...")
 
             LAST_CONFIG_HASH = current_hash
             LAST_FILES_STATE = current_state
@@ -756,6 +921,8 @@ def main():
         print("Hinweis: Zum Starten bitte -D oder --daemon verwenden.")
         return
 
+    cfg = load_config()
+    setup_logging(cfg)
     run_daemon()
 
 
