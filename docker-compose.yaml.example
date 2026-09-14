@@ -18,7 +18,7 @@ services:
       - storage-all:/storage
 
 # ==========================================
-# Healthcheck, muss seperat altiviert werden, wenn der recorder sich unter /app befindet
+# Healthcheck (optional), ist aktiviert
 # ==========================================
 
 
