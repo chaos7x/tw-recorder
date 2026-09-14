@@ -1,8 +1,8 @@
 # tw-recorder 📹🔴
 
-`tw-recorder` ist eine leichtgewichtige, Python-basierte Docker-Lösung zur automatischen Überwachung und Aufzeichnung von Livestreams (Twitch) via Streamlink und FFmpeg[cite: 11, 14].
+`tw-recorder` ist eine leichtgewichtige, Python-basierte Docker-Lösung zur automatischen Überwachung und Aufzeichnung von Livestreams (Twitch) via Streamlink und FFmpeg.
 
-Das Tool prüft regelmäßig konfigurierte Kanäle, zeichnet Live-Streams in Echtzeit auf und remuxt das finale Video automatisch in ein sauber getaggtes MKV-Format mit dynamischer Titelkürzung für Folge-Prozesse (z. B. YouTube Uploads)[cite: 14].
+Das Tool prüft regelmäßig konfigurierte Kanäle, zeichnet Live-Streams in Echtzeit auf und remuxt das finale Video automatisch in ein sauber getaggtes MKV-Format mit dynamischer Titelkürzung für Folge-Prozesse (z. B. YouTube Uploads).
 
 ---
 
@@ -58,7 +58,7 @@ twitch.tv/anotherchannel = best
 ```
 
 ### 2. Starten via Docker CLI
-Starte den Container direkt über die Docker CLI[cite: 10]:
+Starte den Container direkt über die Docker CLI:
 ```bash
 docker run -d \
   --name tw-recorder \
@@ -73,7 +73,7 @@ docker run -d \
 
 ## 📦 Docker Compose Integration
 
-Alternativ kannst du den Service ganz einfach in deine `docker-compose.yml` einbinden[cite: 10]:
+Alternativ kannst du den Service ganz einfach in deine `docker-compose.yml` einbinden:
 
 ```yaml
 services:
@@ -99,36 +99,36 @@ services:
 
 ## ✨ Features
 
-* **Automatische Stream-Erkennung:** Prüft effizient über die Twitch Helix API (oder Streamlink Fallback), ob definierte Kanäle live sind[cite: 14].
-* **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`[cite: 14].
-* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal) und Aufnahmedatum direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen)[cite: 14].
-* **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart[cite: 14].
-* **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird[cite: 14].
-* **Schlankes Docker-Image:** Basiert auf Debian Trixie Slim mit statisch kompiliertem FFmpeg/FFprobe (`mwader/static-ffmpeg`)[cite: 11].
+* **Automatische Stream-Erkennung:** Prüft effizient über die Twitch Helix API (oder Streamlink Fallback), ob definierte Kanäle live sind.
+* **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`.
+* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal) und Aufnahmedatum direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen).
+* **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart.
+* **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird.
+* **Schlankes Docker-Image:** Basiert auf Debian Trixie Slim mit statisch kompiliertem FFmpeg/FFprobe (`mwader/static-ffmpeg`).
 
 ---
 
 ## ⚙️ Umgebungsvariablen (Environment)
 
-* `CLIENT_ID` / `TWITCH_CLIENT_ID`: (optional) Client-ID für die Twitch Helix API Abfrage[cite: 14].
-* `CLIENT_SECRET` / `TWITCH_CLIENT_SECRET`: (optional) Client-Secret für Twitch App Access Token[cite: 14].
-* `TWITCH_USER_TOKEN`: (optional) OAuth Token zur Umgehung von Streamlink-Limits / Ads[cite: 14].
-* `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen[cite: 14].
-* `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container[cite: 14].
-* `STORAGE_DIR`: Standard `/storage`. Zielpfad für die gespeicherten Videoaufnahmen[cite: 11, 14].
+* `CLIENT_ID` / `TWITCH_CLIENT_ID`: (optional) Client-ID für die Twitch Helix API Abfrage.
+* `CLIENT_SECRET` / `TWITCH_CLIENT_SECRET`: (optional) Client-Secret für Twitch App Access Token.
+* `TWITCH_USER_TOKEN`: (optional) OAuth Token zur Umgehung von Streamlink-Limits / Ads.
+* `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
+* `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
+* `STORAGE_DIR`: Standard `/storage`. Zielpfad für die gespeicherten Videoaufnahmen.
 
 ---
 
 ## 🛠️ Lokaler Build & Entwicklung
 
-Ein lokales Image kann einfach über das Build-Skript kompiliert werden[cite: 9]:
+Ein lokales Image kann einfach über das Build-Skript kompiliert werden:
 ```bash
 ./build.sh v1.0.0
 ```
-Falls du Änderungen am Python-Skript testen möchtest, kannst du das `app`-Volume mounten[cite: 10, 12]. Das `entrypoint.sh` führt bevorzugt das externe Skript aus `/app/tw-recorder` aus, wenn vorhanden[cite: 12].
+Falls du Änderungen am Python-Skript testen möchtest, kannst du das `app`-Volume mounten. Das `entrypoint.sh` führt bevorzugt das externe Skript aus `/app/tw-recorder` aus, wenn vorhanden.
 
 ---
 
 ## 📄 Lizenz
 
-Dieses Projekt steht unter der **GNU General Public License v3.0 (GPLv3)**[cite: 13, 14].
+Dieses Projekt steht unter der **GNU General Public License v3.0 (GPLv3)**.
