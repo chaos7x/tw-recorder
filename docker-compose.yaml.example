@@ -18,6 +18,18 @@ services:
       - storage-all:/storage
 
 # ==========================================
+# Healthcheck, muss seperat altiviert werden, wenn der recorder sich unter /app befindet
+# ==========================================
+
+
+#    healthcheck:
+#      test: ["CMD", "python3", "/app/tw-recorder", "--healthcheck"]
+#      interval: 30s
+#      timeout: 5s
+#      start_period: 15s
+#      retries: 3
+
+# ==========================================
 # SEPARATE VOLUMES DEKLARATION
 # ==========================================
 volumes:

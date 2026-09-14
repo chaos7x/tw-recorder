@@ -31,10 +31,11 @@ import urllib.request
 from pathlib import Path
 import re
 import shutil
+import tempfile
 import unicodedata
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 APP_NAME = "tw-recorder"
 logger = logging.getLogger(APP_NAME)
@@ -46,6 +47,16 @@ sys.stderr.reconfigure(line_buffering=True)
 # Standard-Konfigurationspfade
 CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/etc/tw-recorder/recorder.conf"))
 CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
+
+# Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
+# aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
+# leichtgewichtiger Aufruf desselben Skripts (--healthcheck) prüft nur, ob
+# sie frisch genug ist - ohne Config zu laden, damit der Aufruf schnell ist
+# und keine Nebenwirkungen hat.
+HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "tw-recorder.health")))
+# Wie alt die Heartbeat-Datei maximal sein darf, bevor --healthcheck als
+# "unhealthy" gilt. Grosszügig über dem run_daemon()-Zyklus (5s) bemessen.
+HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
 
 # Globale Variablen für das Live-Reload-Tracking
 LAST_CONFIG_HASH = ""
@@ -871,6 +882,7 @@ def run_daemon():
     sync_processes()
 
     while True:
+        write_heartbeat()
         current_hash, current_state = get_config_hash()
 
         if current_hash != LAST_CONFIG_HASH:
@@ -899,6 +911,46 @@ def run_daemon():
         time.sleep(5)
 
 
+def write_heartbeat():
+    """
+    Aktualisiert die Heartbeat-Datei mit dem aktuellen Zeitstempel. Wird bei
+    jedem Durchlauf der run_daemon()-Hauptschleife aufgerufen. Schlägt der
+    Schreibvorgang fehl (z.B. kein Schreibzugriff auf /tmp), wird das nur auf
+    DEBUG geloggt - ein Healthcheck-Problem soll den Recorder nicht stören.
+    """
+    try:
+        HEALTH_FILE.write_text(str(time.time()))
+    except OSError as e:
+        logger.debug(f"Konnte Heartbeat-Datei {HEALTH_FILE} nicht schreiben: {e}")
+
+
+def run_healthcheck() -> int:
+    """
+    Leichtgewichtige Prüfung für externe Healthchecks (z.B. Docker HEALTHCHECK
+    oder Kubernetes livenessProbe): prüft nur, ob die Heartbeat-Datei existiert
+    und nicht älter als HEALTH_STALE_SECONDS ist. Lädt bewusst keine Config,
+    damit der Aufruf schnell ist und keine Nebenwirkungen hat (wird
+    typischerweise alle paar Sekunden aufgerufen).
+    Gibt 0 (healthy) oder 1 (unhealthy) zurück, analog zu Exit-Codes.
+    """
+    if not HEALTH_FILE.is_file():
+        print(f"UNHEALTHY: Heartbeat-Datei {HEALTH_FILE} nicht gefunden (Dämon noch nicht gestartet?).")
+        return 1
+
+    try:
+        age = time.time() - HEALTH_FILE.stat().st_mtime
+    except OSError as e:
+        print(f"UNHEALTHY: Heartbeat-Datei {HEALTH_FILE} nicht lesbar: {e}")
+        return 1
+
+    if age > HEALTH_STALE_SECONDS:
+        print(f"UNHEALTHY: Heartbeat ist {age:.0f}s alt (Limit: {HEALTH_STALE_SECONDS}s).")
+        return 1
+
+    print(f"HEALTHY: Heartbeat ist {age:.0f}s alt.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="tw-recorder",
@@ -914,7 +966,15 @@ def main():
         action="version",
         version=f"{__title__} v{__version__}"
     )
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="Prüft nur den Heartbeat des laufenden Dämons und beendet sich sofort (für Docker HEALTHCHECK)"
+    )
     args = parser.parse_args()
+
+    if args.healthcheck:
+        sys.exit(run_healthcheck())
 
     if not args.daemon:
         parser.print_usage()
