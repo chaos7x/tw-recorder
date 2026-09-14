@@ -13,7 +13,6 @@
 
 import argparse
 import configparser
-import fcntl
 import hashlib
 import json
 import logging
@@ -33,6 +32,15 @@ import re
 import shutil
 import tempfile
 import unicodedata
+
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    # fcntl ist nur auf Unix verfügbar; auf anderen Plattformen läuft das
+    # Skript ohne Datei-Lock-Schutz zwischen mehreren Instanzen weiter.
+    fcntl = None
+    HAS_FCNTL = False
 
 __title__ = "Streamlink Recorder CLI"
 __version__ = "1.2.0"
@@ -91,13 +99,13 @@ def _is_syslog_daemon_running() -> bool:
 
     try:
         pid_dirs = [p for p in proc_dir.iterdir() if p.name.isdigit()]
-    except Exception:
+    except OSError:
         return False
 
     for pid_dir in pid_dirs:
         try:
             comm = (pid_dir / "comm").read_text(encoding="utf-8", errors="ignore").strip()
-        except Exception:
+        except OSError:
             # Prozess kann zwischen listdir() und read_text() beendet worden
             # sein, oder /comm ist nicht lesbar - einfach überspringen.
             continue
@@ -127,12 +135,12 @@ def _resolve_log_file_path(app_name: str, explicit_path: str) -> Path:
         var_log_dir.mkdir(parents=True, exist_ok=True)
         if os.access(var_log_dir, os.W_OK):
             return var_log_dir / f"{app_name}.log"
-    except Exception:
+    except OSError:
         pass
 
     try:
         script_dir = Path(__file__).resolve().parent
-    except Exception:
+    except OSError:
         script_dir = Path.cwd()
     return script_dir / f"{app_name}.log"
 
@@ -213,7 +221,7 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
             root_logger.addHandler(file_handler)
             active_handlers_desc.append(f"Datei ({log_path})")
             reason = f"{trigger_reason}"
-        except Exception as e:
+        except OSError as e:
             reason = f"{trigger_reason}, aber Datei-Handler konnte nicht eingerichtet werden ({e})"
     else:
         reason = "Kein Syslog-Daemon/-Log-Verzeichnis/-Config erkannt - Logging nur nach stdout (journald erfasst das bereits)"
@@ -244,8 +252,8 @@ def get_config_files_state() -> dict:
 
     for f in config_files:
         try:
-            files_state[f] = hashlib.md5(f.read_bytes()).hexdigest()
-        except Exception:
+            files_state[f] = hashlib.md5(f.read_bytes(), usedforsecurity=False).hexdigest()
+        except OSError:
             pass
 
     return files_state
@@ -254,7 +262,7 @@ def get_config_files_state() -> dict:
 def get_config_hash() -> tuple[str, dict]:
     """Berechnet den Gesamt-Hash und gibt den detaillierten Status aller Dateien zurück."""
     state = get_config_files_state()
-    combined = hashlib.md5()
+    combined = hashlib.md5(usedforsecurity=False)
     for f in sorted(state.keys()):
         combined.update(f.name.encode("utf-8"))
         combined.update(state[f].encode("utf-8"))
@@ -287,7 +295,7 @@ def load_config():
     if config_files:
         try:
             config.read(config_files, encoding="utf-8")
-        except Exception as e:
+        except (OSError, configparser.Error, UnicodeDecodeError) as e:
             logger.warning(f"Fehler beim Lesen der Config-Dateien: {e}")
 
     # General / Output Settings
@@ -305,7 +313,7 @@ def load_config():
     default_quality = config.get("streamlink", "stream_quality", fallback=os.getenv("STREAM_QUALITY", "best"))
     streamlink_loglevel = config.get("streamlink", "loglevel", fallback=os.getenv("STREAMLINK_LOGLEVEL", "info"))
     streamlink_retry = int(config.get("streamlink", "retry", fallback=os.getenv("STREAMLINK_RETRY", "30")))
-    webbrowser = config.getboolean("streamlink", "webbrowser", fallback=os.getenv("STREAMLINK_WEBBROWSER", "false").lower() == "true")
+    webbrowser_enabled = config.getboolean("streamlink", "webbrowser", fallback=os.getenv("STREAMLINK_WEBBROWSER", "false").lower() == "true")
 
     # Split der Aufnahme bei Titel-/Kategorieänderung (nur mit Twitch API möglich)
     split_on_title_change = config.getboolean(
@@ -337,7 +345,7 @@ def load_config():
         "default_quality": default_quality,
         "streamlink_loglevel": streamlink_loglevel,
         "streamlink_retry": streamlink_retry,
-        "webbrowser": webbrowser,
+        "webbrowser": webbrowser_enabled,
         "split_on_title_change": split_on_title_change,
         "title_check_interval": title_check_interval,
         "use_ionice": use_ionice,
@@ -376,7 +384,7 @@ def get_app_access_token(client_id: str, client_secret: str, force_refresh: bool
                 app_token = data.get("access_token")
                 token_expires_at = time.time() + data.get("expires_in", 3600) - 60
                 return app_token
-        except Exception as e:
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
             logger.warning(f"Fehler beim Twitch-Token-Abruf: {e}")
             app_token = None
             return None
@@ -423,7 +431,7 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
                     get_app_access_token(client_id, client_secret, force_refresh=True)
                     return check_stream_online(url, cfg, retry=False)
                 logger.warning(f"Twitch API HTTP-Fehler {e.code} für {channel}")
-            except Exception as e:
+            except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
                 with api_warning_lock:
                     api_unavailable_until = time.monotonic() + 60
                     logger.warning(
@@ -496,7 +504,7 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
             return get_stream_info(url, cfg, retry=False)
         logger.warning(f"Twitch API HTTP-Fehler {e.code} für {channel} (Titel-Check)")
         return None
-    except Exception as e:
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
         with api_warning_lock:
             api_unavailable_until = time.monotonic() + 60
             logger.warning(
@@ -506,11 +514,44 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
         return None
 
 
+def _pump_subprocess_output(proc: subprocess.Popen, channel: str) -> None:
+    """
+    Liest die kombinierte stdout/stderr-Ausgabe eines Subprozesses zeilenweise
+    und reicht sie ans Logging-System weiter, statt sie direkt auf den rohen
+    Prozess-stdout/stderr durchzureichen. Ohne das würde Streamlinks Ausgabe
+    am konfigurierten Datei-Handler vorbeilaufen (nur im rohen Terminal-Stream
+    sichtbar, nie in der Logdatei) - genau die Information, die man bei einer
+    fehlgeschlagenen Aufnahme im Nachhinein braucht.
+    Läuft in einem eigenen Daemon-Thread und endet automatisch, sobald der
+    Subprozess sein stdout schließt (Prozessende).
+    """
+    try:
+        for raw_line in iter(proc.stdout.readline, ""):
+            line = raw_line.rstrip()
+            if line:
+                logger.info(f"[streamlink/{channel}] {line}")
+    except (OSError, ValueError):
+        # Pipe kann geschlossen worden sein (z.B. proc.kill() während des Lesens) - unkritisch.
+        pass
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
+    # Config nur bei tatsächlicher Änderung neu laden (gleicher Hash-Mechanismus
+    # wie beim Daemon selbst und bei der Titel-Split-Erkennung weiter unten),
+    # statt bei jedem Poll-Tick (alle sleep_interval Sekunden) blind neu zu
+    # parsen - besonders bei vielen gleichzeitig überwachten Kanälen spart das
+    # unnötige Datei-I/O.
+    cfg = load_config()
+    last_outer_cfg_hash, _ = get_config_hash()
+
     while not stop_event.is_set():
-        cfg = load_config()
+        current_outer_cfg_hash, _ = get_config_hash()
+        if current_outer_cfg_hash != last_outer_cfg_hash:
+            last_outer_cfg_hash = current_outer_cfg_hash
+            cfg = load_config()
+
         storage_dir = cfg["storage_dir"]
         sleep_interval = cfg["sleep_interval"]
         pattern_tmpl = cfg["filename_pattern"]
@@ -524,14 +565,16 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
         out_pattern = str(out_dir / "{time:%Y-%m-%d_%H-%M}_{author}_{category}_{title}.ts")
 
         if check_stream_online(url, cfg):
-            try:
-                lock_fd = open(lock_file, "a+")
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                if 'lock_fd' in locals() and not lock_fd.closed:
-                    lock_fd.close()
-                time.sleep(sleep_interval)
-                continue
+            lock_fd = None
+            if HAS_FCNTL:
+                try:
+                    lock_fd = open(lock_file, "a+")
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (IOError, OSError):
+                    if lock_fd is not None and not lock_fd.closed:
+                        lock_fd.close()
+                    time.sleep(sleep_interval)
+                    continue
 
             title_split_triggered = False
             try:
@@ -553,7 +596,19 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                 # ausschließlich auf DEBUG-Level, nie auf INFO oder höher.
                 logger.debug(f"Streamlink-Kommando für {channel}: {cmd}")
 
-                proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+                output_thread = threading.Thread(
+                    target=_pump_subprocess_output,
+                    args=(proc, channel),
+                    daemon=True
+                )
+                output_thread.start()
 
                 split_on_title_change = cfg["split_on_title_change"]
                 title_check_interval = cfg["title_check_interval"]
@@ -630,9 +685,21 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
                 try:
                     ts_files = sorted(out_dir.glob("*.ts"), key=lambda f: f.stat().st_mtime, reverse=True)
-                    if ts_files:
+                    if not ts_files:
+                        logger.warning(
+                            f"Kein .ts-File für {channel} in {out_dir} gefunden - "
+                            "Remuxing übersprungen (Aufnahme evtl. zu kurz/fehlgeschlagen)."
+                        )
+                    else:
                         latest_file = ts_files[0]
-                        if (time.time() - latest_file.stat().st_mtime) < 300:
+                        age_sec = time.time() - latest_file.stat().st_mtime
+                        if age_sec >= 300:
+                            logger.warning(
+                                f"Neueste .ts-Datei für {channel} ({latest_file.name}) ist "
+                                f"{age_sec:.0f}s alt (Limit: 300s) - vermutlich von einem "
+                                "früheren Lauf, Remuxing übersprungen."
+                            )
+                        else:
 
                             full_stem = latest_file.stem
 
@@ -759,23 +826,24 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 if latest_file.exists():
                                     latest_file.unlink()
                                 logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
-                except Exception as e:
+                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
                     logger.warning(f"Fehler beim FFmpeg-Remuxing für {channel}: {e}")
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Top-Level-Boundary für den gesamten Aufnahme-Zyklus (Streamlink-Start, Monitoring, Remux); jeder Fehler hier darf den Überwachungs-Thread für diesen Kanal nicht dauerhaft beenden
                 # Fängt z.B. Fehler beim Starten von streamlink (Popen) oder
                 # sonstige unerwartete Fehler ab, damit der Überwachungs-Thread
                 # für diesen Kanal nicht dauerhaft stirbt.
                 logger.warning(f"Unerwarteter Fehler bei der Aufnahme für {channel}: {e}")
 
             finally:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                    lock_fd.close()
-                except Exception:
-                    pass
+                if lock_fd is not None:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        lock_fd.close()
+                    except OSError:
+                        pass
 
-                lock_file.unlink(missing_ok=True)
+                    lock_file.unlink(missing_ok=True)
 
             if stop_event.is_set():
                 return
@@ -863,8 +931,13 @@ def shutdown_handler(signum, frame):
         stop_event.set()
         threads.append(thread)
 
+    # Gemeinsames Zeitbudget für ALLE Threads statt 10s pro Thread einzeln -
+    # bei z.B. 5 aktiven Kanälen sonst im Worst Case 50s Shutdown-Verzögerung.
+    shutdown_deadline = time.monotonic() + 10
     for thread in threads:
-        thread.join(timeout=10)
+        remaining = shutdown_deadline - time.monotonic()
+        if remaining > 0:
+            thread.join(timeout=remaining)
 
     sys.exit(0)
 
