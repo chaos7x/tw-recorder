@@ -15,23 +15,28 @@ COPY --from=ffmpeg-binaries /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 
 # ------------------------------------------
-# LAYER 2: System-Pakete + Pip-Installation
+# LAYER 2: System-Pakete + streamlink via Pip
 # ------------------------------------------
-# Bewusst Single-Stage statt Multi-Stage-Build - siehe Begründung im
-# Debian-Dockerfile (pip/setuptools sind hier inert, kein echter
-# Sicherheits- oder Größenvorteil, der die --target/PYTHONPATH-Komplexität
-# rechtfertigt).
+# --target auf einen fixen, EIGENEN Pfad je Package (nicht gemeinsam mit
+# tw_recorder!) - zwei separate `pip install --target=X` Aufrufe in
+# denselben, bereits befüllten Zielordner haben dazu geführt, dass beim
+# zweiten Aufruf kein Entry-Point-Skript mehr erzeugt wurde (bin/tw-recorder
+# fehlte, obwohl das Package selbst + dist-info korrekt installiert waren).
+# Getrennte Ordner umgehen das und halten streamlinks Neben-Scripts (idna,
+# normalizer, wsdump, ...) außerdem sauber von tw-recorder getrennt.
 RUN apk add --no-cache \
     libcom_err \
+    bash \
     mc \
     python3 \
     py3-pip \
     py3-setuptools \
     ca-certificates \
-    && pip install --no-cache-dir --break-system-packages streamlink
+    && pip install --break-system-packages --no-cache-dir --no-build-isolation --target=/usr/local/lib/streamlink streamlink
 
 WORKDIR /app
 ENV HOME=/app
+ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
 
 # ------------------------------------------
 # LAYER 3: Verzeichnisse anlegen & vorbereiten
@@ -44,24 +49,26 @@ RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
 # ------------------------------------------
 COPY pyproject.toml /app/pyproject.toml
 COPY src/ /app/src/
-RUN pip install --no-cache-dir --break-system-packages --no-deps . \
+RUN pip install --break-system-packages --no-deps --no-cache-dir --no-build-isolation --target=/usr/local/lib/tw-recorder /app \
     && rm -rf /app/pyproject.toml /app/src /app/build
 
 # ------------------------------------------
-# LAYER 5: Skripte & Configs kopieren
+# LAYER 5: Skripte, Configs & Entry-Points
 # ------------------------------------------
 COPY --chmod=644 bashrc /etc/global.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
+RUN cp /usr/local/lib/tw-recorder/bin/tw-recorder /usr/local/bin/tw-recorder \
+    && cp /usr/local/lib/streamlink/bin/streamlink /usr/local/bin/streamlink
 
 # ------------------------------------------
-# LAYER 6: Symlinks erstellen
+# LAYER 6: Symlinks für bashrc erstellen
 # ------------------------------------------
 RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD ["/usr/local/bin/tw-recorder", "--healthcheck"]
+  CMD ["tw-recorder", "--healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 

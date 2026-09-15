@@ -17,12 +17,12 @@ COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 # ------------------------------------------
 # LAYER 2: System-Pakete + Pip-Installation
 # ------------------------------------------
-# Bewusst Single-Stage statt Multi-Stage-Build: pip/setuptools im Image sind
-# inert (keine laufenden Dienste, keine exponierte Angriffsfläche) und
-# streamlink zieht ohnehin schon einen eigenen, nicht kleinen Dependency-Baum
-# (requests, lxml, websocket-client, ...) mit - der Größenvorteil einer
-# separaten Builder-Stage wäre hier Rauschen, die --target/PYTHONPATH-
-# Komplexität dagegen eine reale Fehlerquelle (siehe Alpine --prefix-Bug).
+# Kein --target nötig: Debians python3-pip ist patched und installiert bei
+# einem normalen `pip install` bereits automatisch nach /usr/local/bin bzw.
+# /usr/local/lib/python3.XX/dist-packages - genau dort, wo der System-Python
+# auch sucht. Das --target/PYTHONPATH/Symlink-Muster war nötig, um einen
+# echten Bug auf Alpine zu umgehen (vanilla pip dort installiert relativ zu
+# /usr statt /usr/local) - auf Debian besteht dieses Problem nicht.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -64,7 +64,7 @@ RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD ["/usr/local/bin/tw-recorder", "--healthcheck"]
+  CMD ["tw-recorder", "--healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
