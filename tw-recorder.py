@@ -43,7 +43,7 @@ except ImportError:
     HAS_FCNTL = False
 
 __title__ = "Streamlink Recorder CLI"
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 APP_NAME = "tw-recorder"
 logger = logging.getLogger(APP_NAME)
