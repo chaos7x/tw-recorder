@@ -4,7 +4,7 @@
 FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
 
 # ==========================================
-# STUFE 1: Schlankes Laufzeit-Image
+# STUFE 1: FINAL STAGE (Schlankes Laufzeit-Image)
 # ==========================================
 FROM python:3-slim
 
@@ -15,45 +15,50 @@ COPY --from=ffmpeg-binaries /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 
 # ------------------------------------------
-# LAYER 2: System-Pakete + Pip-Installation
+# LAYER 2: System-Pakete
 # ------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcom-err2 \
     mc \
     ca-certificates \
-    && pip install --no-cache-dir --break-system-packages streamlink \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ENV HOME=/app
 
 # ------------------------------------------
-# LAYER 3: Verzeichnisse anlegen & vorbereiten
+# LAYER 3: tw_recorder + streamlink über pip installieren
+# ------------------------------------------
+# Anders als bei Debian/Alpine: hier keine separate Builder-Stage nötig, da
+# dieses Image ohnehin komplett auf pip aufbaut (python:3-slim bringt pip
+# schon mit) - kein Grund, es aus dem finalen Image rauszuhalten.
+COPY pyproject.toml /app/pyproject.toml
+COPY src/ /app/src/
+RUN pip install --no-cache-dir --break-system-packages streamlink \
+    && pip install --no-cache-dir --break-system-packages --no-deps . \
+    && rm -rf /app/pyproject.toml /app/src /app/build
+
+# ------------------------------------------
+# LAYER 4: Verzeichnisse anlegen & vorbereiten
 # ------------------------------------------
 RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
     && chmod 777 /storage /log
 
 # ------------------------------------------
-# LAYER 4: Skripte & Configs kopieren (Verzeichnisse existieren jetzt)
+# LAYER 5: Skripte & Configs kopieren
 # ------------------------------------------
 COPY --chmod=644 bashrc /etc/global.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY --chmod=755 tw-recorder.py /usr/local/bin/tw-recorder
 COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
 
 # ------------------------------------------
-# LAYER 5: Symlinks erstellen
+# LAYER 6: Symlinks erstellen
 # ------------------------------------------
 RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD sh -c '\
-    if [ -f /app/tw-recorder ]; then \
-      exec /app/tw-recorder --healthcheck; \
-    else \
-      exec /usr/local/bin/tw-recorder --healthcheck; \
-    fi'
+  CMD ["/usr/local/bin/tw-recorder", "--healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
