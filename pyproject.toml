@@ -1,0 +1,32 @@
+[project]
+name = "tw-recorder"
+version = "1.2.2"
+description = "Multi-Channel Twitch-Stream-Recorder (Streamlink + FFmpeg)"
+readme = "README.md"
+requires-python = ">=3.11"
+# Keine Dependencies: tw-recorder.py nutzt ausschließlich die Standardbibliothek
+# (urllib statt requests). streamlink ist ein separates CLI-Tool, das per
+# Subprocess aufgerufen wird - kein Python-Import, daher keine pyproject.toml-
+# Dependency, sondern eigenständig per pip installiert (siehe Dockerfiles).
+
+[project.scripts]
+tw-recorder = "tw_recorder.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+preview = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "LOG", "BLE", "PLW1510", "DTZ", "SIM", "PIE", "C4", "EXE"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

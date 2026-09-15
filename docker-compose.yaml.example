@@ -23,11 +23,13 @@ services:
 
 
 #    healthcheck:
-#      test: ["CMD", "python3", "/app/tw-recorder", "--healthcheck"]
+#      test: ["CMD", "tw-recorder", "--healthcheck"]
 #      interval: 30s
 #      timeout: 5s
 #      start_period: 15s
 #      retries: 3
+#      # Ist im Image bereits als HEALTHCHECK-Instruktion hinterlegt - hier nur relevant, falls
+#      # das Compose-eigene Healthcheck-Verhalten (z.B. andere Intervalle) gewünscht ist.
 
 # ==========================================
 # SEPARATE VOLUMES DEKLARATION

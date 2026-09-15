@@ -17,14 +17,18 @@ COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 # ------------------------------------------
 # LAYER 2: System-Pakete + Pip-Installation
 # ------------------------------------------
+# Bewusst Single-Stage statt Multi-Stage-Build - siehe Begründung im
+# Debian-Dockerfile (pip/setuptools sind hier inert, kein echter
+# Sicherheits- oder Größenvorteil, der die --target/PYTHONPATH-Komplexität
+# rechtfertigt).
 RUN apk add --no-cache \
     libcom_err \
     mc \
     python3 \
     py3-pip \
+    py3-setuptools \
     ca-certificates \
-    && pip install --no-cache-dir --break-system-packages streamlink \
-    && rm -rf /var/lib/apt/lists/*
+    && pip install --no-cache-dir --break-system-packages streamlink
 
 WORKDIR /app
 ENV HOME=/app
@@ -36,26 +40,28 @@ RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
     && chmod 777 /storage /log
 
 # ------------------------------------------
-# LAYER 4: Skripte & Configs kopieren (Verzeichnisse existieren jetzt)
+# LAYER 4: tw_recorder-Package installieren
+# ------------------------------------------
+COPY pyproject.toml /app/pyproject.toml
+COPY src/ /app/src/
+RUN pip install --no-cache-dir --break-system-packages --no-deps . \
+    && rm -rf /app/pyproject.toml /app/src /app/build
+
+# ------------------------------------------
+# LAYER 5: Skripte & Configs kopieren
 # ------------------------------------------
 COPY --chmod=644 bashrc /etc/global.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY --chmod=755 tw-recorder.py /usr/local/bin/tw-recorder
 COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
 
 # ------------------------------------------
-# LAYER 5: Symlinks erstellen
+# LAYER 6: Symlinks erstellen
 # ------------------------------------------
 RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD sh -c '\
-    if [ -f /app/tw-recorder ]; then \
-      exec /app/tw-recorder --healthcheck; \
-    else \
-      exec /usr/local/bin/tw-recorder --healthcheck; \
-    fi'
+  CMD ["/usr/local/bin/tw-recorder", "--healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 

@@ -6,16 +6,27 @@ Das Tool prüft regelmäßig konfigurierte Kanäle, zeichnet Live-Streams in Ech
 
 ---
 
+## ✨ Features
+
+* **Automatische Stream-Erkennung:** Prüft effizient über die Twitch Helix API (oder Streamlink Fallback), ob definierte Kanäle live sind.
+* **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`.
+* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal) und Aufnahmedatum direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen).
+* **Titel-/Kategorie-Split:** Erkennt Änderungen am Stream-Titel oder der Kategorie während einer laufenden Aufnahme und beendet/startet die Aufzeichnung automatisch neu (optional, `split_on_title_change`).
+* **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart.
+* **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird.
+* **Schlankes Docker-Image:** Basiert auf Debian Trixie Slim mit statisch kompiliertem FFmpeg/FFprobe (`mwader/static-ffmpeg`).
+
+---
+
 ## 🚀 Schnellstart
 
-### 1. Vorbereitung (Ordner & Konfiguration)
-## Konfiguration
+### 1. Konfiguration
 
-Die Hauptkonfiguration erfolgt über die `recorder.conf` im Verzeichnis `/etc/tw-recorder/`. 
+Die Hauptkonfiguration erfolgt über die `recorder.conf` im Verzeichnis `/etc/tw-recorder/`.
 
 Zusätzlich unterstützt die Anwendung modularisierte Konfigurationsdateien: Alle `.conf`-Dateien im Ordner `/etc/tw-recorder/conf.d/` werden automatisch eingelesen und kombiniert. Änderungen an den Konfigurationsdateien werden zur Laufzeit per Hash-Prüfung erkannt und automatisch neu geladen.
 
-### Beispiel `recorder.conf`
+#### Beispiel `recorder.conf`
 
 ```ini
 [general]
@@ -48,13 +59,18 @@ retry = 30
 # Webbrowser-Headless-Modus zur Umgehung von Captchas/Protection
 webbrowser = false
 
+# Aufnahme bei Titel-/Kategorieänderung automatisch splitten (nur mit Twitch-API-Zugangsdaten möglich)
+split_on_title_change = false
+
+# Prüfintervall in Sekunden für die Titel-/Kategorie-Split-Erkennung
+title_check_interval = 90
+
 [channels]
 # Format: url_oder_channel = qualität
 # Beispiele:
-[https://twitch.tv/example](https://twitch.tv/example) = best
+https://twitch.tv/example = best
 example = 1080p60
 twitch.tv/anotherchannel = best
-
 ```
 
 ### 2. Starten via Docker CLI
@@ -69,15 +85,11 @@ docker run -d \
   -v $(pwd)/videos:/storage:rw \
   ghcr.io/chaos7x/tw-recorder:latest
 ```
----
 
-## 📦 Docker Compose Integration
-
-Alternativ kannst du den Service ganz einfach in deine `docker-compose.yml` einbinden:
-
+### 3. 📦 Docker Compose Integration
 ```yaml
 services:
-  Twitch-recorder:
+  tw-recorder:
     image: ghcr.io/chaos7x/tw-recorder:${IMAGE_VERSION:-latest}
     container_name: tw-recorder
     hostname: tw-recorder
@@ -92,19 +104,36 @@ services:
     volumes:
       - ./config:/etc/tw-recorder:ro
       - ./videos:/storage:rw
-
 ```
+
 ---
 
+## 🛠️ Bare-Metal-Installation (ohne Docker)
 
-## ✨ Features
+`tw-recorder` läuft auch direkt auf dem Host. Anders als bei vielen anderen Python-Tools kommt hier **keine** Python-Abhängigkeit über `apt`/`apk`, weil `tw-recorder.py` ausschließlich die Standardbibliothek nutzt (`urllib` statt `requests`) - `pip` installiert nur das eigene Package:
 
-* **Automatische Stream-Erkennung:** Prüft effizient über die Twitch Helix API (oder Streamlink Fallback), ob definierte Kanäle live sind.
-* **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`.
-* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal) und Aufnahmedatum direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen).
-* **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart.
-* **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird.
-* **Schlankes Docker-Image:** Basiert auf Debian Trixie Slim mit statisch kompiliertem FFmpeg/FFprobe (`mwader/static-ffmpeg`).
+```bash
+apt install python3-pip python3-setuptools ffmpeg
+pip install --break-system-packages --no-deps .
+
+# streamlink separat installieren (eigenständiges CLI-Tool, kein Python-Import
+# von tw-recorder - braucht echte PyPI-Dependency-Auflösung, daher OHNE --no-deps)
+pip install --break-system-packages streamlink
+```
+
+Danach steht `tw-recorder --version` systemweit zur Verfügung.
+
+---
+
+## 🐳 Docker-Image-Varianten
+
+Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_recorder`-Package ein, alle bewusst als Single-Stage-Build: `pip`/`setuptools` im Image sind inert (keine laufenden Dienste, keine exponierte Angriffsfläche), und `streamlink` zieht ohnehin schon einen eigenen, nicht kleinen Dependency-Baum mit - der Größenvorteil einer separaten Builder-Stage wäre hier Rauschen, die zusätzliche Komplexität dagegen eine reale Fehlerquelle.
+
+| Dockerfile | Basis | Installationsweg |
+|---|---|---|
+| `Dockerfile` (Standard) | `debian:trixie-slim` | `apt` für System-Tools, `pip install streamlink` + `pip install --no-deps .` direkt im Image |
+| `Dockerfile.alpine` | `alpine:3` | Wie oben, aber `apk` statt `apt` |
+| `Dockerfile.pyimg` | `python:3-slim` | Identisches Prinzip, `pip` ist hier ohnehin schon Teil der Basis-Image-Identität |
 
 ---
 
@@ -116,16 +145,30 @@ services:
 * `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
 * `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
 * `STORAGE_DIR`: Standard `/storage`. Zielpfad für die gespeicherten Videoaufnahmen.
+* `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben.
 
 ---
 
-## 🛠️ Lokaler Build & Entwicklung
+## 🧑‍💻 Lokaler Build & Entwicklung
 
-Ein lokales Image kann einfach über das Build-Skript kompiliert werden:
+Ein neues Docker-Image kann über das mitgelieferte Shell-Skript gebaut werden:
+
 ```bash
-./build.sh v1.0.0
+./build.sh                    # Nutzt Name & Version aus pyproject.toml, Standard-Dockerfile
+./build.sh 2.0.0               # Explizite Version, Standard-Dockerfile
+./build.sh alpine               # Version aus pyproject.toml, Dockerfile.alpine
+./build.sh 2.0.0 pyimg          # Explizite Version, Dockerfile.pyimg
 ```
-Falls du Änderungen am Python-Skript testen möchtest, kannst du das `app`-Volume mounten. Das `entrypoint.sh` führt bevorzugt das externe Skript aus `/app/tw-recorder` aus, wenn vorhanden.
+
+Name und Standard-Version werden automatisch aus `pyproject.toml` gelesen - ein explizit übergebenes Versions-Argument überschreibt das.
+
+### Tests & Linting
+```bash
+pip install -r requirements-test.txt
+pytest -v
+
+ruff check src/tw_recorder/
+```
 
 ---
 
