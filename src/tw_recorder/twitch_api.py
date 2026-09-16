@@ -109,7 +109,8 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
     proc = subprocess.run(
         cmd,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
+        check=False
     )
     return proc.returncode == 0
 

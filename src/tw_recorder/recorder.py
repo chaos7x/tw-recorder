@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tw_recorder import config
 
@@ -79,7 +79,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             lock_fd = None
             if HAS_FCNTL:
                 try:
-                    lock_fd = open(lock_file, "a+")
+                    lock_fd = open(lock_file, "a+")  # noqa: SIM115
                     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except (IOError, OSError):
                     if lock_fd is not None and not lock_fd.closed:
@@ -242,7 +242,6 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                             if not category:
                                 category = "NoCategory"
 
-
                             raw_title = cat_title_parts[1].strip() if len(cat_title_parts) > 1 else ""
                             full_title = raw_title if raw_title else "Untitled"
 
@@ -264,10 +263,12 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 safe_title = "Untitled"
 
                             # Datum als datetime-Objekt parsen für volle Kompatibilität mit {time:...} Formaten
+                            # For DTZ007 (strptime):
                             try:
-                                dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M")
+                                dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=timezone.utc)
                             except ValueError:
-                                dt_obj = datetime.now()
+                                # For DTZ005 (datetime.now):
+                                dt_obj = datetime.now(timezone.utc)
 
                             try:
                                 target_filename = pattern_tmpl.format(
@@ -332,7 +333,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 # Aufnahmen auf anderen Kanälen) es benötigt.
                                 ffmpeg_cmd = ["ionice", "-c3"] + ffmpeg_cmd
 
-                            ff_proc = subprocess.run(ffmpeg_cmd)
+                            ff_proc = subprocess.run(ffmpeg_cmd, check=False)
                             if ff_proc.returncode == 0:
                                 if latest_file.exists():
                                     latest_file.unlink()
