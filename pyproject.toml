@@ -1,6 +1,6 @@
 [project]
 name = "tw-recorder"
-version = "1.2.3"
+version = "1.2.4"
 description = "Multi-Channel Twitch-Stream-Recorder (Streamlink + FFmpeg)"
 readme = "README.md"
 requires-python = ">=3.11"
