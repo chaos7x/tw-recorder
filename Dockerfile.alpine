@@ -4,7 +4,34 @@
 FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
 
 # ==========================================
-# STUFE 1: Schlankes Laufzeit-Image
+# STUFE 1: Builder - installiert tw_recorder + streamlink isoliert per pip
+# ==========================================
+# Eigene Stage, damit pip/setuptools NICHT im finalen Laufzeit-Image landen -
+# nur die fertig installierten Pakete werden per COPY --from übernommen.
+FROM alpine:3 AS builder
+
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    py3-setuptools
+
+WORKDIR /build
+
+# Getrennte --target-Ordner je Package (nicht gemeinsam mit tw_recorder!) -
+# zwei separate `pip install --target=X` Aufrufe in denselben, bereits
+# befüllten Zielordner haben dazu geführt, dass beim zweiten Aufruf kein
+# Entry-Point-Skript mehr erzeugt wurde (bin/tw-recorder fehlte, obwohl das
+# Package selbst + dist-info korrekt installiert waren). Getrennte Ordner
+# umgehen das und halten streamlinks Neben-Scripts (idna, normalizer,
+# wsdump, ...) außerdem sauber von tw-recorder getrennt.
+RUN pip install --break-system-packages --no-cache-dir --no-build-isolation --target=/install/streamlink streamlink
+
+COPY pyproject.toml /build/pyproject.toml
+COPY src/ /build/src/
+RUN pip install --break-system-packages --no-deps --no-cache-dir --no-build-isolation --target=/install/tw-recorder /build
+
+# ==========================================
+# STUFE 2: FINAL STAGE (schlankes Laufzeit-Image, kein pip/setuptools)
 # ==========================================
 FROM alpine:3
 
@@ -15,24 +42,14 @@ COPY --from=ffmpeg-binaries /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 
 # ------------------------------------------
-# LAYER 2: System-Pakete + streamlink via Pip
+# LAYER 2: System-Pakete
 # ------------------------------------------
-# --target auf einen fixen, EIGENEN Pfad je Package (nicht gemeinsam mit
-# tw_recorder!) - zwei separate `pip install --target=X` Aufrufe in
-# denselben, bereits befüllten Zielordner haben dazu geführt, dass beim
-# zweiten Aufruf kein Entry-Point-Skript mehr erzeugt wurde (bin/tw-recorder
-# fehlte, obwohl das Package selbst + dist-info korrekt installiert waren).
-# Getrennte Ordner umgehen das und halten streamlinks Neben-Scripts (idna,
-# normalizer, wsdump, ...) außerdem sauber von tw-recorder getrennt.
 RUN apk add --no-cache \
     libcom_err \
     bash \
     mc \
     python3 \
-    py3-pip \
-    py3-setuptools \
-    ca-certificates \
-    && pip install --break-system-packages --no-cache-dir --no-build-isolation --target=/usr/local/lib/streamlink streamlink
+    ca-certificates
 
 WORKDIR /app
 ENV HOME=/app
@@ -50,12 +67,12 @@ RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
     && chmod 1777 /storage /log
 
 # ------------------------------------------
-# LAYER 4: tw_recorder-Package installieren
+# LAYER 4: tw_recorder + streamlink aus dem Builder übernehmen
 # ------------------------------------------
-COPY pyproject.toml /app/pyproject.toml
-COPY src/ /app/src/
-RUN pip install --break-system-packages --no-deps --no-cache-dir --no-build-isolation --target=/usr/local/lib/tw-recorder /app \
-    && rm -rf /app/pyproject.toml /app/src /app/build
+COPY --from=builder /install/tw-recorder /usr/local/lib/tw-recorder
+COPY --from=builder /install/streamlink /usr/local/lib/streamlink
+COPY --from=builder /install/tw-recorder/bin/tw-recorder /usr/local/bin/tw-recorder
+COPY --from=builder /install/streamlink/bin/streamlink /usr/local/bin/streamlink
 
 # ------------------------------------------
 # LAYER 5: Skripte, Configs & Entry-Points
@@ -63,8 +80,6 @@ RUN pip install --break-system-packages --no-deps --no-cache-dir --no-build-isol
 COPY --chmod=644 bashrc /etc/global.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
-RUN cp /usr/local/lib/tw-recorder/bin/tw-recorder /usr/local/bin/tw-recorder \
-    && cp /usr/local/lib/streamlink/bin/streamlink /usr/local/bin/streamlink
 
 # ------------------------------------------
 # LAYER 6: Symlinks für bashrc erstellen
