@@ -143,6 +143,28 @@ class TestCheckStreamOnline:
 
         assert twitch_api.check_stream_online("https://twitch.tv/foo", cfg_no_creds) is True
 
+    def test_channel_is_url_encoded_in_query_string(self, twitch_api, monkeypatch):
+        """
+        channel landet unescaped als f-string direkt in der Query - ohne
+        urllib.parse.quote() könnten Sonderzeichen (z.B. aus einer verunglückten
+        Config-URL) die Query verfälschen oder zusätzliche Parameter einschleusen.
+        """
+        captured = {}
+        responses = iter([
+            FakeHTTPResponse({"access_token": "TOK", "expires_in": 3600}),
+            FakeHTTPResponse({"data": []}),
+        ])
+
+        def urlopen_capture(req, timeout=5):
+            captured["url"] = req.full_url
+            return next(responses)
+
+        monkeypatch.setattr(twitch_api.urllib.request, "urlopen", urlopen_capture)
+
+        twitch_api.check_stream_online("https://twitch.tv/foo bar&baz", TWITCH_CFG)
+
+        assert "user_login=foo%20bar%26baz" in captured["url"]
+
     def test_api_unavailable_after_generic_error_sets_cooldown(self, twitch_api, monkeypatch):
         """
         Der Cooldown (api_unavailable_until) wird nur gesetzt, wenn der
@@ -199,3 +221,20 @@ class TestGetStreamInfo:
 
     def test_returns_none_for_non_twitch_url(self, twitch_api):
         assert twitch_api.get_stream_info("https://youtube.com/foo", TWITCH_CFG) is None
+
+    def test_channel_is_url_encoded_in_query_string(self, twitch_api, monkeypatch):
+        captured = {}
+        responses = iter([
+            FakeHTTPResponse({"access_token": "TOK", "expires_in": 3600}),
+            FakeHTTPResponse({"data": []}),
+        ])
+
+        def urlopen_capture(req, timeout=5):
+            captured["url"] = req.full_url
+            return next(responses)
+
+        monkeypatch.setattr(twitch_api.urllib.request, "urlopen", urlopen_capture)
+
+        twitch_api.get_stream_info("https://twitch.tv/foo bar&baz", TWITCH_CFG)
+
+        assert "user_login=foo%20bar%26baz" in captured["url"]

@@ -112,6 +112,7 @@ def run_daemon():
 
     # Initialen Zustand beim Start erfassen
     LAST_CONFIG_HASH, LAST_FILES_STATE = config.get_config_hash()
+    config.check_secrets_permissions()
     sync_processes()
 
     while True:
@@ -139,6 +140,7 @@ def run_daemon():
             LAST_CONFIG_HASH = current_hash
             LAST_FILES_STATE = current_state
 
+            config.check_secrets_permissions()
             sync_processes()
 
         time.sleep(5)

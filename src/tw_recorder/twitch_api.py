@@ -76,7 +76,7 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
         token = get_app_access_token(client_id, client_secret) if api_available else None
 
         if token:
-            api_url = f"https://api.twitch.tv/helix/streams?user_login={channel}"
+            api_url = f"https://api.twitch.tv/helix/streams?user_login={urllib.parse.quote(channel, safe='')}"
             headers = {
                 "Client-ID": client_id,
                 "Authorization": f"Bearer {token}"
@@ -143,7 +143,7 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
     if not token:
         return None
 
-    api_url = f"https://api.twitch.tv/helix/streams?user_login={channel}"
+    api_url = f"https://api.twitch.tv/helix/streams?user_login={urllib.parse.quote(channel, safe='')}"
     headers = {
         "Client-ID": client_id,
         "Authorization": f"Bearer {token}"
