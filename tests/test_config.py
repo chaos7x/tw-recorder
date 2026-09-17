@@ -150,6 +150,50 @@ class TestParseStreamers:
         assert daemon.parse_streamers() == {}
 
 
+class TestCheckSecretsPermissions:
+    def test_warns_when_secrets_present_and_file_group_readable(self, config, tmp_path, monkeypatch, caplog):
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[twitch]\nclient_secret = supersecret\n")
+        main_conf.chmod(0o640)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert any("lesbar" in r.message for r in caplog.records)
+
+    def test_no_warning_when_file_owner_only(self, config, tmp_path, monkeypatch, caplog):
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[twitch]\nuser_token = abc123\n")
+        main_conf.chmod(0o600)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert caplog.records == []
+
+    def test_no_warning_when_no_secrets_configured(self, config, tmp_path, monkeypatch, caplog):
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[general]\nstorage_dir = /storage\n")
+        main_conf.chmod(0o644)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert caplog.records == []
+
+
 class TestGetExtraArgs:
     def test_no_token_no_webbrowser(self, config):
         args = config.get_extra_args({"user_token": "", "webbrowser": False})

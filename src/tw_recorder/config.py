@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -143,6 +144,42 @@ def load_config():
         "use_ionice": use_ionice,
         "config_obj": config
     }
+
+
+def check_secrets_permissions():
+    """
+    Warnt, falls recorder.conf/conf.d Twitch-Credentials (client_secret/
+    user_token) im Klartext enthält, aber für Gruppe/Andere lesbar ist.
+
+    Anders als bei yt-uploads selbst geschriebenen OAuth-Credentials wird hier
+    nur gewarnt statt aktiv korrigiert: die Datei wird per (meist :ro-)
+    Bind-Mount vom Host verwaltet, ein chmod von innen würde bei einem
+    Read-Only-Mount ohnehin fehlschlagen und wäre außerdem host-seitig wieder
+    verloren. Soll von Aufrufern nur nach einer tatsächlichen Config-Änderung
+    aufgerufen werden (z.B. run_daemon()s Hash-Vergleich), nicht bei jedem
+    Poll-Tick, um Log-Spam zu vermeiden.
+    """
+    cfg = load_config()
+    if not (cfg["client_secret"] or cfg["user_token"]):
+        return
+
+    config_files = []
+    if CONFIG_FILE.is_file():
+        config_files.append(CONFIG_FILE)
+    if CONF_D_DIR.is_dir():
+        config_files.extend(sorted(CONF_D_DIR.glob("*.conf")))
+
+    for f in config_files:
+        try:
+            mode = f.stat().st_mode
+        except OSError:
+            continue
+        if mode & (stat.S_IRGRP | stat.S_IROTH):
+            logger.warning(
+                f"⚠️ {f} enthält Twitch-Zugangsdaten (client_secret/user_token) im Klartext "
+                f"und ist für Gruppe/Andere lesbar (Modus {oct(stat.S_IMODE(mode))}). "
+                "Empfehlung: auf dem Host `chmod 600` setzen, sofern der Mount das zulässt."
+            )
 
 
 def get_extra_args(cfg: dict):

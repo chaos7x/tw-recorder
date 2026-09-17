@@ -39,8 +39,13 @@ ENV HOME=/app
 # ------------------------------------------
 # LAYER 3: Verzeichnisse anlegen & vorbereiten
 # ------------------------------------------
+# 1777 statt 777: die Laufzeit-UID ist unbekannt (frei wählbar via `docker run -u`,
+# um Berechtigungskonflikte mit host-gemounteten Verzeichnissen zu vermeiden),
+# daher müssen beide Verzeichnisse für jede UID beschreibbar bleiben. Das
+# Sticky-Bit (wie bei /tmp) verhindert aber, dass ein Prozess/Nutzer Dateien
+# löschen oder umbenennen kann, die ein anderer angelegt hat.
 RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
-    && chmod 777 /storage /log
+    && chmod 1777 /storage /log
 
 # ------------------------------------------
 # LAYER 4: tw_recorder-Package installieren
