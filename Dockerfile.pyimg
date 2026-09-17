@@ -4,7 +4,29 @@
 FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
 
 # ==========================================
-# STUFE 1: FINAL STAGE (Schlankes Laufzeit-Image)
+# STUFE 1: Builder - installiert tw_recorder + streamlink isoliert per pip
+# ==========================================
+# Eigene Stage, damit pip/setuptools NICHT im finalen Laufzeit-Image landen -
+# nur die fertig installierten Pakete werden per COPY --from übernommen.
+FROM python:3-slim AS builder
+
+WORKDIR /build
+
+# Getrennte --target-Ordner je Package (nicht gemeinsam mit tw_recorder!) -
+# zwei separate `pip install --target=X` Aufrufe in denselben, bereits
+# befüllten Zielordner haben dazu geführt, dass beim zweiten Aufruf kein
+# Entry-Point-Skript mehr erzeugt wurde (bin/tw-recorder fehlte, obwohl das
+# Package selbst + dist-info korrekt installiert waren). Getrennte Ordner
+# umgehen das und halten streamlinks Neben-Scripts (idna, normalizer,
+# wsdump, ...) außerdem sauber von tw-recorder getrennt.
+RUN pip install --break-system-packages --no-cache-dir --target=/install/streamlink streamlink
+
+COPY pyproject.toml /build/pyproject.toml
+COPY src/ /build/src/
+RUN pip install --break-system-packages --no-deps --no-cache-dir --target=/install/tw-recorder /build
+
+# ==========================================
+# STUFE 2: FINAL STAGE (schlankes Laufzeit-Image, kein pip/setuptools)
 # ==========================================
 FROM python:3-slim
 
@@ -25,21 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 ENV HOME=/app
+ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
 
 # ------------------------------------------
-# LAYER 3: tw_recorder + streamlink über pip installieren
-# ------------------------------------------
-# Anders als bei Debian/Alpine: hier keine separate Builder-Stage nötig, da
-# dieses Image ohnehin komplett auf pip aufbaut (python:3-slim bringt pip
-# schon mit) - kein Grund, es aus dem finalen Image rauszuhalten.
-COPY pyproject.toml /app/pyproject.toml
-COPY src/ /app/src/
-RUN pip install --no-cache-dir --break-system-packages streamlink \
-    && pip install --no-cache-dir --break-system-packages --no-deps . \
-    && rm -rf /app/pyproject.toml /app/src /app/build
-
-# ------------------------------------------
-# LAYER 4: Verzeichnisse anlegen & vorbereiten
+# LAYER 3: Verzeichnisse anlegen & vorbereiten
 # ------------------------------------------
 # 1777 statt 777: die Laufzeit-UID ist unbekannt (frei wählbar via `docker run -u`,
 # um Berechtigungskonflikte mit host-gemounteten Verzeichnissen zu vermeiden),
@@ -48,6 +59,14 @@ RUN pip install --no-cache-dir --break-system-packages streamlink \
 # löschen oder umbenennen kann, die ein anderer angelegt hat.
 RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
     && chmod 1777 /storage /log
+
+# ------------------------------------------
+# LAYER 4: tw_recorder + streamlink aus dem Builder übernehmen
+# ------------------------------------------
+COPY --from=builder /install/tw-recorder /usr/local/lib/tw-recorder
+COPY --from=builder /install/streamlink /usr/local/lib/streamlink
+COPY --from=builder /install/tw-recorder/bin/tw-recorder /usr/local/bin/tw-recorder
+COPY --from=builder /install/streamlink/bin/streamlink /usr/local/bin/streamlink
 
 # ------------------------------------------
 # LAYER 5: Skripte & Configs kopieren

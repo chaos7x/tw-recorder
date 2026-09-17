@@ -4,7 +4,35 @@
 FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
 
 # ==========================================
-# STUFE 1: Schlankes Laufzeit-Image
+# STUFE 1: Builder - installiert tw_recorder + streamlink isoliert per pip
+# ==========================================
+# Eigene Stage, damit pip/setuptools NICHT im finalen Laufzeit-Image landen -
+# nur die fertig installierten Pakete werden per COPY --from übernommen.
+FROM debian:trixie-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-setuptools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Getrennte --target-Ordner je Package (nicht gemeinsam mit tw_recorder!) -
+# zwei separate `pip install --target=X` Aufrufe in denselben, bereits
+# befüllten Zielordner haben dazu geführt, dass beim zweiten Aufruf kein
+# Entry-Point-Skript mehr erzeugt wurde (bin/tw-recorder fehlte, obwohl das
+# Package selbst + dist-info korrekt installiert waren). Getrennte Ordner
+# umgehen das und halten streamlinks Neben-Scripts (idna, normalizer,
+# wsdump, ...) außerdem sauber von tw-recorder getrennt.
+RUN pip install --break-system-packages --no-cache-dir --target=/install/streamlink streamlink
+
+COPY pyproject.toml /build/pyproject.toml
+COPY src/ /build/src/
+RUN pip install --break-system-packages --no-deps --no-cache-dir --target=/install/tw-recorder /build
+
+# ==========================================
+# STUFE 2: FINAL STAGE (schlankes Laufzeit-Image, kein pip/setuptools)
 # ==========================================
 FROM debian:trixie-slim
 
@@ -15,26 +43,18 @@ COPY --from=ffmpeg-binaries /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 
 # ------------------------------------------
-# LAYER 2: System-Pakete + Pip-Installation
+# LAYER 2: System-Pakete
 # ------------------------------------------
-# Kein --target nötig: Debians python3-pip ist patched und installiert bei
-# einem normalen `pip install` bereits automatisch nach /usr/local/bin bzw.
-# /usr/local/lib/python3.XX/dist-packages - genau dort, wo der System-Python
-# auch sucht. Das --target/PYTHONPATH/Symlink-Muster war nötig, um einen
-# echten Bug auf Alpine zu umgehen (vanilla pip dort installiert relativ zu
-# /usr statt /usr/local) - auf Debian besteht dieses Problem nicht.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
-    python3-setuptools \
     libcom-err2 \
     mc \
     ca-certificates \
-    && pip install --no-cache-dir --break-system-packages streamlink \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ENV HOME=/app
+ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
 
 # ------------------------------------------
 # LAYER 3: Verzeichnisse anlegen & vorbereiten
@@ -48,12 +68,12 @@ RUN mkdir -p /storage /log /etc/tw-recorder/conf.d \
     && chmod 1777 /storage /log
 
 # ------------------------------------------
-# LAYER 4: tw_recorder-Package installieren
+# LAYER 4: tw_recorder + streamlink aus dem Builder übernehmen
 # ------------------------------------------
-COPY pyproject.toml /app/pyproject.toml
-COPY src/ /app/src/
-RUN pip install --no-cache-dir --break-system-packages --no-deps . \
-    && rm -rf /app/pyproject.toml /app/src /app/build
+COPY --from=builder /install/tw-recorder /usr/local/lib/tw-recorder
+COPY --from=builder /install/streamlink /usr/local/lib/streamlink
+COPY --from=builder /install/tw-recorder/bin/tw-recorder /usr/local/bin/tw-recorder
+COPY --from=builder /install/streamlink/bin/streamlink /usr/local/bin/streamlink
 
 # ------------------------------------------
 # LAYER 5: Skripte & Configs kopieren
