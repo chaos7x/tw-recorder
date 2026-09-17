@@ -46,6 +46,54 @@ def _pump_subprocess_output(proc: subprocess.Popen, channel: str) -> None:
         pass
 
 
+def _parse_recorded_filename(full_stem: str, channel: str) -> tuple[str, str, str, str, str]:
+    """
+    Rekonstruiert Datum, Uhrzeit, Kanal, Kategorie und Titel aus dem von
+    Streamlink vergebenen .ts-Dateinamen (Pattern siehe out_pattern in
+    record_loop()). Gibt (date_str, time_str, parsed_channel, category,
+    full_title) zurück - category/full_title sind noch unsanitized (roh),
+    Aufrufer wendet die Pfad-Sanitisierung selbst an.
+    """
+    # Zuerst Datum und Uhrzeit abtrennen (enthalten nie Unterstriche, nur
+    # Bindestriche -> sicher via split(_, 2))
+    dt_parts = full_stem.split("_", 2)
+    date_str = dt_parts[0] if len(dt_parts) > 0 and dt_parts[0] else "0000-00-00"
+    time_str = dt_parts[1] if len(dt_parts) > 1 and dt_parts[1] else "00-00"
+    remainder = dt_parts[2] if len(dt_parts) > 2 else ""
+
+    # Kanalname ist bereits bekannt (aus der URL) und damit zuverlässiger
+    # als ein Re-Parsing des Dateinamens per Unterstrich-Split (Twitch-Namen
+    # dürfen "_" enthalten, was das alte Split-Verfahren fälschlich abschnitt).
+    parsed_channel = channel
+    channel_prefix = f"{channel}_"
+    if remainder.startswith(channel_prefix):
+        rest_after_channel = remainder[len(channel_prefix):]
+    else:
+        # Unerwartetes Format (z.B. Streamlink hat den Namen anders
+        # geschrieben) -> best effort wie zuvor
+        rest_after_channel = remainder
+
+    # Kategorie steht in eckigen Klammern (siehe out_pattern) - dadurch
+    # bleibt die Trennung zum Titel eindeutig, selbst wenn die Kategorie
+    # selbst einen "_" enthält (z.B. durch Leerzeichen-Ersetzung). Fallback
+    # auf den alten naiven "_"-Split für .ts-Dateien, die noch mit dem alten
+    # Pattern (vor diesem Fix) benannt wurden und zufällig noch in out_dir
+    # herumliegen.
+    bracket_match = re.match(r'^\[(.*?)\]_?(.*)$', rest_after_channel)
+    if bracket_match:
+        raw_category = bracket_match.group(1)
+        raw_title = bracket_match.group(2).strip()
+    else:
+        cat_title_parts = rest_after_channel.split("_", 1)
+        raw_category = cat_title_parts[0] if len(cat_title_parts) > 0 else ""
+        raw_title = cat_title_parts[1].strip() if len(cat_title_parts) > 1 else ""
+
+    category = raw_category.strip() or "NoCategory"
+    full_title = raw_title or "Untitled"
+
+    return date_str, time_str, parsed_channel, category, full_title
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
@@ -72,8 +120,13 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
         lock_file = out_dir / ".record.lock"
 
-        # Streamlink nimmt rohen Transport-Stream auf (.ts)
-        out_pattern = str(out_dir / "{time:%Y-%m-%d_%H-%M}_{author}_{category}_{title}.ts")
+        # Streamlink nimmt rohen Transport-Stream auf (.ts). Kategorie in
+        # eckige Klammern gefasst, damit sie beim Remuxen wieder eindeutig
+        # vom Titel abgetrennt werden kann (siehe Parsing weiter unten) -
+        # ein reiner "_"-Separator wäre mehrdeutig, sobald der Kategoriename
+        # selbst ein "_" enthält (z.B. durch Leerzeichen-Ersetzung mancher
+        # Streamlink-Versionen/-Plugins).
+        out_pattern = str(out_dir / "{time:%Y-%m-%d_%H-%M}_{author}_[{category}]_{title}.ts")
 
         if check_stream_online(url, cfg):
             lock_fd = None
@@ -214,36 +267,13 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
                             full_stem = latest_file.stem
 
-                            # Zuerst Datum und Uhrzeit abtrennen (enthalten nie
-                            # Unterstriche, nur Bindestriche -> sicher via split(_, 2))
-                            dt_parts = full_stem.split("_", 2)
-                            date_str = dt_parts[0] if len(dt_parts) > 0 and dt_parts[0] else "0000-00-00"
-                            time_str = dt_parts[1] if len(dt_parts) > 1 and dt_parts[1] else "00-00"
-                            remainder = dt_parts[2] if len(dt_parts) > 2 else ""
-
-                            # Kanalname ist bereits bekannt (aus der URL) und damit
-                            # zuverlässiger als ein Re-Parsing des Dateinamens per
-                            # Unterstrich-Split (Twitch-Namen dürfen "_" enthalten,
-                            # was das alte Split-Verfahren fälschlich abschnitt).
-                            parsed_channel = channel
-                            channel_prefix = f"{channel}_"
-                            if remainder.startswith(channel_prefix):
-                                rest_after_channel = remainder[len(channel_prefix):]
-                            else:
-                                # Unerwartetes Format (z.B. Streamlink hat den Namen
-                                # anders geschrieben) -> best effort wie zuvor
-                                rest_after_channel = remainder
-
-                            cat_title_parts = rest_after_channel.split("_", 1)
-                            raw_category = cat_title_parts[0] if len(cat_title_parts) > 0 else ""
-                            category = raw_category.strip() if raw_category.strip() else "NoCategory"
+                            date_str, time_str, parsed_channel, category, full_title = (
+                                _parse_recorded_filename(full_stem, channel)
+                            )
                             category = re.sub(r'[/\\:*?"<>|]', '_', category)
                             category = re.sub(r'[\s_]+', '_', category).strip('_')
                             if not category:
                                 category = "NoCategory"
-
-                            raw_title = cat_title_parts[1].strip() if len(cat_title_parts) > 1 else ""
-                            full_title = raw_title if raw_title else "Untitled"
 
                             # 1. Kürzel <3 durch ein echtes Unicode-Herz ersetzen
                             full_title = full_title.replace("<3", "♥")
