@@ -25,4 +25,4 @@ jobs:
         run: pytest -v
 
       - name: Linting ausführen
-        run: ruff check src/tw-recorder/
+        run: ruff check src/tw_recorder/
