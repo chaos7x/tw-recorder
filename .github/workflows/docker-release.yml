@@ -21,6 +21,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    outputs:
+      version: ${{ steps.bump_version.outputs.version }}
 
     strategy:
       matrix:
@@ -109,5 +111,67 @@ jobs:
           tag_name: ${{ steps.bump_version.outputs.version }}
           name: Release ${{ steps.bump_version.outputs.version }}
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-deb:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: fpm installieren
+        run: sudo gem install --no-document fpm
+
+      - name: Package per pip in ein Zielverzeichnis installieren
+        run: python3 -m pip install --no-deps --no-cache-dir --target=install .
+
+      - name: .deb-Verzeichnisstruktur aufbauen
+        run: |
+          VERSION="${{ needs.build-and-push.outputs.version }}"
+          echo "DEB_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+
+          # Shebang auf den System-Python fixen - pip schreibt sonst den
+          # Interpreter-Pfad DIESES Runners rein, der auf einer echten
+          # Debian/Ubuntu-Installation nicht existiert.
+          sed -i '1s|.*|#!/usr/bin/python3|' install/bin/tw-recorder
+          rm -rf install/tw_recorder/__pycache__
+
+          # /usr/lib/python3/dist-packages statt eines eigenen PYTHONPATH-
+          # Verzeichnisses (wie im Dockerfile) - das ist bei einem .deb der
+          # Standard-Suchpfad von Debians System-Python, das Package ist
+          # damit ohne zusätzliche Umgebungsvariablen importierbar.
+          mkdir -p pkgroot/usr/bin pkgroot/usr/lib/python3/dist-packages pkgroot/etc/tw-recorder/conf.d
+          cp install/bin/tw-recorder pkgroot/usr/bin/tw-recorder
+          chmod 755 pkgroot/usr/bin/tw-recorder
+          cp -r install/tw_recorder pkgroot/usr/lib/python3/dist-packages/tw_recorder
+          cp -r install/tw_recorder-*.dist-info pkgroot/usr/lib/python3/dist-packages/
+          cp recorder.conf.example pkgroot/etc/tw-recorder/recorder.conf
+
+      - name: .deb bauen
+        run: |
+          fpm -s dir -t deb -f \
+            -n tw-recorder \
+            -v "$DEB_VERSION" \
+            --license GPL-3.0 \
+            --maintainer "chaos7x" \
+            --description "Multi-Channel Twitch-Stream-Recorder (Streamlink + FFmpeg)" \
+            --url "https://github.com/${{ github.repository }}" \
+            --depends python3 \
+            --depends streamlink \
+            --depends ffmpeg \
+            --config-files /etc/tw-recorder/recorder.conf \
+            -C pkgroot \
+            usr etc
+
+      - name: .deb als Release-Asset hochladen
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.build-and-push.outputs.version }}
+          files: "*.deb"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
