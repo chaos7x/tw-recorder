@@ -35,3 +35,4 @@ src/*.egg-info/
 
 # Repo-spezifisch: lokales Login-Testskript
 anmeldung.py
+testfiles/
