@@ -132,6 +132,15 @@ wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder
 apt install ./tw-recorder_<version>_all.deb
 ```
 
+### Alternative: Standalone .pyz (kein pip nötig)
+
+`./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein:
+
+```bash
+./build-pyz.sh
+./tw-recorder.pyz --version
+```
+
 ---
 
 ## 🐳 Docker-Image-Varianten
