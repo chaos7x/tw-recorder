@@ -14,12 +14,16 @@ name: Docker Build
 # Major-Version, profitieren also vom selben Mechanismus.
 #
 # Trivy-Scan (nicht blockierend, exit-code 0): apt-get upgrade/apk upgrade
-# in den Dockerfiles beheben nur, was der jeweilige Paketmanager patchen
-# kann - streamlink (per pip installiert) läuft komplett daran vorbei und
-# ist auch nicht in dependabot.yml erfasst (die deckt nur die Ecosysteme
-# docker/github-actions ab, kein pip). Trivy scannt zusätzlich diese Ebene
-# sowie CVEs, für die es noch gar keinen Fix gibt - beides bleibt sonst
-# komplett unsichtbar.
+# patchen nur, was der jeweilige Paketmanager kennt. streamlink läuft
+# davon komplett unabhängig - es ist ein per Subprocess aufgerufenes
+# CLI-Tool ohne apt/apk-Paket, wird ohne Versionspin direkt im Dockerfile
+# per pip installiert (siehe Dockerfile/Dockerfile.alpine) und taucht
+# deshalb in keiner von Dependabot lesbaren Manifestdatei auf (dependabot.yml
+# hat zwar bereits das pip-Ecosystem, das sieht aber keine nackte
+# `RUN pip install`-Zeile) - es wird bei jedem Build einfach die aktuell
+# neueste Version gezogen. Trivy ist hier die einzige Stelle, die zeigt,
+# welche Version das tatsächlich war und ob sie bekannte (auch noch
+# ungefixte) CVEs hat.
 
 on:
   pull_request:
