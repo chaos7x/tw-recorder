@@ -14,4 +14,12 @@ if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
 fi
 
+echo ""
+echo "tw-recorder wurde installiert, der systemd-Service ist aber noch NICHT aktiviert."
+echo "Bitte zuerst /etc/tw-recorder/recorder.conf ([channels] etc.) anpassen,"
+echo "dann den Dienst manuell aktivieren und starten:"
+echo ""
+echo "    systemctl enable --now tw-recorder"
+echo ""
+
 exit 0
