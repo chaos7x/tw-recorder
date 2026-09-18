@@ -45,7 +45,14 @@ COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 # ------------------------------------------
 # LAYER 2: System-Pakete
 # ------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt-get upgrade: das Base-Image selbst (Pakete wie gzip/perl-base/libssl3/
+# libsqlite3/libpcre2, die nicht über unsere eigenen apt-get-install-Zeilen
+# kommen) hinkt Debians eigenen Security-Patches oft ein paar Tage hinterher,
+# bis die Docker-Official-Images-Pipeline es neu baut - ein simples `docker
+# pull` holt dann weiterhin die alte, unpatchte Version. apt-get upgrade
+# zieht stattdessen bei jedem Build die aktuell in Debians eigenen Repos
+# verfügbaren Paketversionen, unabhängig vom Alter des Base-Images selbst.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     python3 \
     libcom-err2 \
     mc \
