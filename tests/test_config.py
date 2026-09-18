@@ -140,6 +140,23 @@ class TestParseStreamers:
 
         assert streamers == {"https://twitch.tv/somechannel": "best"}
 
+    def test_defaults_to_best_quality_when_no_equals_sign_at_all(self, daemon, config, tmp_path, monkeypatch):
+        """
+        Regression: eine Zeile ganz ohne "= wert" (z.B. vergessenes "= best")
+        liefert dank allow_no_value=True einen quality-Wert von None statt
+        eines leeren Strings - .strip() darauf crashte vorher mit
+        AttributeError und riss den ganzen Dämon mit runter.
+        """
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[channels]\nsomechannel\n")
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        streamers = daemon.parse_streamers()
+
+        assert streamers == {"https://twitch.tv/somechannel": "best"}
+
     def test_no_channels_section_returns_empty_dict(self, daemon, config, tmp_path, monkeypatch):
         conf_d = tmp_path / "conf.d"
         conf_d.mkdir()

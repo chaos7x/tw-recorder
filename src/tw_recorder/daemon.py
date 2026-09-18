@@ -28,7 +28,11 @@ def parse_streamers():
     if config_obj.has_section("channels"):
         for raw_url, quality in config_obj.items("channels"):
             raw_url = raw_url.strip()
-            quality = quality.strip() if quality.strip() else "best"
+            # quality ist None, wenn die Zeile kein "= wert" hat (z.B. nur
+            # "channelname" statt "channelname = best") - allow_no_value=True
+            # lässt das als gültige Syntax durch, .strip() auf None würde
+            # sonst mit AttributeError den ganzen Dämon abstürzen lassen.
+            quality = (quality or "").strip() or "best"
 
             # Bereinige sämtliche gängigen Twitch-Präfixe (inkl. www)
             clean_input = raw_url
