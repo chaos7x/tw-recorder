@@ -125,11 +125,11 @@ Danach steht `tw-recorder --version` systemweit zur Verfügung.
 
 ### Alternative: Fertiges Debian-Paket (.deb)
 
-Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält zusätzlich ein `tw-recorder_<version>_amd64.deb` als Anhang - keine manuelle `pip`-Installation nötig, `apt`/`dpkg` löst die Abhängigkeiten (`streamlink`, `ffmpeg`) automatisch mit auf:
+Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält zusätzlich ein `tw-recorder_<version>_all.deb` als Anhang - keine manuelle `pip`-Installation nötig, `apt`/`dpkg` löst die Abhängigkeiten (`streamlink`, `ffmpeg`) automatisch mit auf:
 
 ```bash
-wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder_<version>_amd64.deb
-apt install ./tw-recorder_<version>_amd64.deb
+wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder_<version>_all.deb
+apt install ./tw-recorder_<version>_all.deb
 ```
 
 ---
