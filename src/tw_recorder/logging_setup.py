@@ -43,11 +43,31 @@ def _is_syslog_daemon_running() -> bool:
     return False
 
 
+def _is_dedicated_mount(path: Path) -> bool:
+    """
+    Prüft, ob path ein eigener Mountpoint ist (Docker-Volume/Bind-Mount) statt
+    nur ein gewöhnliches Verzeichnis, das das Dockerfile per `mkdir -p` fest
+    ins Image gebacken hat (z.B. /log) - eine reine is_dir()-Prüfung kann
+    diese beiden Fälle nicht unterscheiden, da `mkdir -p` das Verzeichnis auch
+    ganz ohne jeden Mount anlegt. Vergleicht dazu die Geräte-ID (st_dev) von
+    path und seinem Elternverzeichnis: unterschiedliche st_dev bedeutet, dass
+    dort tatsächlich ein Volume/Bind-Mount eingehängt ist.
+    """
+    if not path.is_dir():
+        return False
+    try:
+        return path.stat().st_dev != path.parent.stat().st_dev
+    except OSError:
+        return False
+
+
 def _resolve_log_file_path(app_name: str, explicit_path: str) -> Path:
     """
     Ermittelt den Ziel-Pfad für die rotierende Logdatei nach Priorität:
     1. Explizite Konfiguration (Config-Datei oder ENV-Variable LOG_FILE)
-    2. /log/<app_name>.log, falls /log existiert (Docker-Volume-Konvention)
+    2. /log/<app_name>.log, falls /log als eigenes Docker-Volume gemountet
+       ist (nicht nur als vom Dockerfile angelegtes Verzeichnis vorhanden,
+       siehe _is_dedicated_mount())
     3. /var/log/<app_name>/<app_name>.log, falls anlegbar/beschreibbar (FHS)
     4. Fallback: Datei im Programmverzeichnis selbst
     """
@@ -55,7 +75,7 @@ def _resolve_log_file_path(app_name: str, explicit_path: str) -> Path:
         return Path(explicit_path)
 
     docker_log_dir = Path("/log")
-    if docker_log_dir.is_dir():
+    if _is_dedicated_mount(docker_log_dir):
         return docker_log_dir / f"{app_name}.log"
 
     var_log_dir = Path(f"/var/log/{app_name}")
@@ -79,8 +99,10 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
     - Immer ein stdout-Handler, damit journald/systemd/docker logs die
       Ausgabe unabhängig von der Betriebsart automatisch erfassen.
     - Zusätzlich ein rotierender Datei-Handler (max. 10 MB, 5 Backups),
-      ausgelöst durch: explizite log_file-Konfiguration, ein vorhandenes
-      /log-Verzeichnis (Docker-Volume-Konvention), oder einen tatsächlich
+      ausgelöst durch: explizite log_file-Konfiguration, ein tatsächlich als
+      Docker-Volume gemountetes /log-Verzeichnis (siehe _is_dedicated_mount()
+      - eine reine is_dir()-Prüfung reicht nicht, da das Dockerfile /log auch
+      ganz ohne Mount fest ins Image anlegt), oder einen tatsächlich
       laufenden klassischen Syslog-Daemon. Ohne einen dieser Gründe läuft
       die Ausgabe ohnehin bereits über journald (stdout-Erfassung) - eine
       eigene Logdatei wäre dann nur doppelte Datenhaltung ohne Mehrwert.
@@ -117,21 +139,21 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
     if not explicit_path:
         explicit_path = os.getenv("LOG_FILE", "").strip()
 
-    docker_log_dir_present = Path("/log").is_dir()
+    docker_log_volume_mounted = _is_dedicated_mount(Path("/log"))
     syslog_running = _is_syslog_daemon_running()
 
-    # Datei-Logging wird ausgelöst durch (a) explizite Konfiguration, (b) die
-    # Docker-Volume-Konvention /log (klares Signal, dass Logdateien gewünscht
-    # sind - unabhängig davon, ob im Container selbst ein Syslog-Daemon läuft,
-    # was in Containern ohnehin unüblich ist), oder (c) einen tatsächlich
-    # laufenden klassischen Syslog-Daemon auf Bare-Metal-/systemd-Systemen.
-    # Ohne einen dieser drei Gründe läuft die Ausgabe ohnehin schon über
-    # journald/docker logs (stdout-Erfassung) - eine eigene Logdatei wäre
-    # dann nur doppelte Datenhaltung ohne Mehrwert.
+    # Datei-Logging wird ausgelöst durch (a) explizite Konfiguration, (b) ein
+    # tatsächlich als Docker-Volume gemountetes /log (klares Signal, dass
+    # Logdateien gewünscht sind - unabhängig davon, ob im Container selbst
+    # ein Syslog-Daemon läuft, was in Containern ohnehin unüblich ist), oder
+    # (c) einen tatsächlich laufenden klassischen Syslog-Daemon auf
+    # Bare-Metal-/systemd-Systemen. Ohne einen dieser drei Gründe läuft die
+    # Ausgabe ohnehin schon über journald/docker logs (stdout-Erfassung) -
+    # eine eigene Logdatei wäre dann nur doppelte Datenhaltung ohne Mehrwert.
     if explicit_path:
         trigger_reason = "explizite log_file-Konfiguration"
-    elif docker_log_dir_present:
-        trigger_reason = "/log-Verzeichnis gefunden (Docker-Volume-Konvention)"
+    elif docker_log_volume_mounted:
+        trigger_reason = "/log als Docker-Volume gemountet"
     elif syslog_running:
         trigger_reason = "Syslog-Daemon erkannt"
     else:
