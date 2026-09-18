@@ -132,6 +132,12 @@ wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder
 apt install ./tw-recorder_<version>_all.deb
 ```
 
+Das Paket legt einen dedizierten Systemuser (`tw-recorder`) und einen systemd-Service an, startet ihn aber bewusst nicht automatisch - erst `/etc/tw-recorder/recorder.conf` (bzw. `conf.d/`) anpassen, dann:
+
+```bash
+systemctl enable --now tw-recorder
+```
+
 ### Alternative: Standalone .pyz (kein pip nötig)
 
 `./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein:

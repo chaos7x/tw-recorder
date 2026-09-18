@@ -1,0 +1,16 @@
+[Unit]
+Description=tw-recorder - Multi-Channel Twitch-Stream-Recorder
+Documentation=https://github.com/chaos7x/tw-recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tw-recorder
+Group=tw-recorder
+ExecStart=/usr/bin/tw-recorder -D
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
