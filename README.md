@@ -149,6 +149,16 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 
 ---
 
+## 🏷️ Versionierung
+
+Reguläre Releases folgen `vX.Y.Z` (SemVer) und entstehen manuell zusammen mit einer echten Code-Änderung.
+
+Zusätzlich prüft ein monatlicher Workflow (`os-patch-release.yml`, 1. jeden Monats), ob das Debian-/Alpine-Basis-Image ungenutzte Security-Patches hat, die `docker-refresh.yml`'s wöchentliches `latest`-Update zwar schon mitnimmt, die aber an den fixen `vX.Y.Z`-Tags vorbeilaufen (die frieren für immer auf ihrem Build-Zeitpunkt ein). Findet der Workflow etwas, hängt er eine **vierte Versionsstelle** an, die ausschließlich für solche reinen OS-Patch-Releases reserviert ist: `v1.2.5` → `v1.2.5.1` → `v1.2.5.2` (jeweils ohne Code-Änderung, nur aktualisierte System-Pakete). Bleibt die vierte Stelle bei Nichts-zu-patchen-Läufen einfach aus, gibt es auch keinen neuen Tag - kein Rauschen in der Release-Historie.
+
+Der nächste echte Code-Release setzt diese vierte Stelle **nicht fort**, sondern lässt sie weg: auf `v1.2.5.2` folgt bei einer echten Änderung `v1.2.6`, nicht `v1.2.6.0` oder `v1.2.5.3`.
+
+---
+
 ## 🧑‍💻 Lokaler Build & Entwicklung
 
 Ein neues Docker-Image kann über das mitgelieferte Shell-Skript gebaut werden:
