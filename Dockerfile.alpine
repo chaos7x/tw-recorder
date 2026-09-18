@@ -44,7 +44,11 @@ COPY --from=ffmpeg-binaries /ffprobe /usr/local/bin/ffprobe
 # ------------------------------------------
 # LAYER 2: System-Pakete
 # ------------------------------------------
-RUN apk add --no-cache \
+# apk upgrade: die im alpine-Base-Image bereits vorinstallierten Pakete
+# (busybox, musl, apk-tools, ...) hinken Alpines eigenen Security-Patches
+# ggf. hinterher, bis das Base-Image neu gebaut wird - apk upgrade zieht
+# stattdessen bei jedem Build die aktuell verfügbaren Paketversionen.
+RUN apk upgrade --no-cache && apk add --no-cache \
     libcom_err \
     bash \
     mc \
