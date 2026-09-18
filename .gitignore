@@ -2,15 +2,12 @@
 log/
 videos/
 oauth/
-tests/
 app/
 config/
+tests/
 
-# Testdateien ausschließen
-anmeldung.py
-
-# Envireorment ausschließen
-.env
+# Lokale Tooling-Konfiguration ausschließen
+.github/agents/
 
 # Backup- und Sicherungsdateien ausschließen
 *.sav
@@ -18,15 +15,24 @@ anmeldung.py
 *.new
 *.diff
 *.patch
+*.log
 
 # Python Bytecode und Cache ausschließen
 __pycache__/
 *.pyc
+
+# Docker-Compose-Override und lokale Compose-Datei ausschließen
 docker-compose.override.yaml
 docker-compose.yaml
+
+# Environment- und Secrets-Dateien ausschließen
+.env
 .secrets
 
 build/
 dist/
 src/*.egg-info/
 *.pyz
+
+# Repo-spezifisch: lokales Login-Testskript
+anmeldung.py
