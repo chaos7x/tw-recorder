@@ -160,12 +160,13 @@ jobs:
           # Verzeichnisses (wie im Dockerfile) - das ist bei einem .deb der
           # Standard-Suchpfad von Debians System-Python, das Package ist
           # damit ohne zusätzliche Umgebungsvariablen importierbar.
-          mkdir -p pkgroot/usr/bin pkgroot/usr/lib/python3/dist-packages pkgroot/etc/tw-recorder/conf.d
+          mkdir -p pkgroot/usr/bin pkgroot/usr/lib/python3/dist-packages pkgroot/etc/tw-recorder/conf.d pkgroot/usr/lib/systemd/system
           cp install/bin/tw-recorder pkgroot/usr/bin/tw-recorder
           chmod 755 pkgroot/usr/bin/tw-recorder
           cp -r install/tw_recorder pkgroot/usr/lib/python3/dist-packages/tw_recorder
           cp -r install/tw_recorder-*.dist-info pkgroot/usr/lib/python3/dist-packages/
           cp recorder.conf.example pkgroot/etc/tw-recorder/recorder.conf
+          cp tw-recorder.service pkgroot/usr/lib/systemd/system/tw-recorder.service
 
       - name: .deb bauen
         run: |
@@ -180,7 +181,11 @@ jobs:
             --depends python3 \
             --depends streamlink \
             --depends ffmpeg \
+            --depends adduser \
             --config-files /etc/tw-recorder/recorder.conf \
+            --after-install postinst.sh \
+            --before-remove prerm.sh \
+            --after-remove postrm.sh \
             -C pkgroot \
             usr etc
 
