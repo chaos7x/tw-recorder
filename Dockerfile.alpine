@@ -55,6 +55,17 @@ RUN apk upgrade --no-cache && apk add --no-cache \
     python3 \
     ca-certificates
 
+# ------------------------------------------
+# LAYER 2b: Dedizierter Non-Root-User
+# ------------------------------------------
+# Gehärtetes Image: laeuft standardmaessig nicht als root, auch wenn beim
+# Deploy kein `user:`/`-u` gesetzt wird. Feste UID:GID (11107:11108) passend
+# zur in docker-compose.yaml.example dokumentierten Konvention - kann bei
+# Bedarf trotzdem per `docker run -u`/Compose `user:` ueberschrieben werden
+# (die 1777-Verzeichnisse unten bleiben deshalb fuer jede UID beschreibbar).
+RUN addgroup -S -g 11108 tw-recorder \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11107 -G tw-recorder tw-recorder
+
 WORKDIR /app
 ENV HOME=/app
 ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
@@ -90,6 +101,11 @@ COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
 # ------------------------------------------
 RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
+
+# /app gehoert dem dedizierten User statt root, damit HOME=/app (siehe oben)
+# fuer ihn tatsaechlich beschreibbar ist (z.B. fuer streamlink-Caches).
+RUN chown tw-recorder:tw-recorder /app
+USER tw-recorder
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD ["tw-recorder", "--healthcheck"]
