@@ -57,8 +57,8 @@ def get_config_hash() -> tuple[str, dict]:
     state = get_config_files_state()
     combined = hashlib.md5(usedforsecurity=False)
     for f in sorted(state.keys()):
-        combined.update(f.name.encode("utf-8"))
-        combined.update(state[f].encode("utf-8"))
+        combined.update(f.name.encode())
+        combined.update(state[f].encode())
     return combined.hexdigest(), state
 
 
