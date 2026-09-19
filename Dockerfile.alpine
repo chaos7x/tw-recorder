@@ -55,6 +55,22 @@ RUN apk upgrade --no-cache && apk add --no-cache \
     python3 \
     ca-certificates
 
+# ------------------------------------------
+# LAYER 2b: Dedizierter Non-Root-User
+# ------------------------------------------
+# Gehärtetes Image: laeuft standardmaessig nicht als root, auch wenn beim
+# Deploy kein `user:`/`-u` gesetzt wird. UID/GID bewusst NICHT fest kodiert -
+# addgroup/adduser -S waehlen automatisch eine freie System-UID/GID <1000.
+# BusyBox' adduser legt OHNE -G keine gleichnamige Gruppe automatisch an
+# (anders als GNU adduser/useradd -U) - deshalb hier explizit zwei Schritte,
+# sonst schlaegt ein spaeteres `chown tw-recorder:tw-recorder` fehl, weil die
+# Gruppe "tw-recorder" gar nicht existiert. Wer die UID an sein eigenes Setup
+# anpassen will (z.B. fuer Bind-Mount-Rechte), ueberschreibt sie ganz normal
+# per `docker run -u`/Compose `user:` - die 1777-Verzeichnisse unten bleiben
+# davon unabhaengig fuer jede UID beschreibbar.
+RUN addgroup -S tw-recorder \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -G tw-recorder tw-recorder
+
 WORKDIR /app
 ENV HOME=/app
 ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
@@ -90,6 +106,11 @@ COPY --chmod=644 recorder.conf.example /etc/tw-recorder/recorder.conf
 # ------------------------------------------
 RUN ln -s /etc/global.bashrc /tmp/.bashrc \
     && ln -s /etc/global.bashrc /app/.bashrc
+
+# /app gehoert dem dedizierten User statt root, damit HOME=/app (siehe oben)
+# fuer ihn tatsaechlich beschreibbar ist (z.B. fuer streamlink-Caches).
+RUN chown tw-recorder:tw-recorder /app
+USER tw-recorder
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD ["tw-recorder", "--healthcheck"]
