@@ -1,6 +1,7 @@
 """
 Tests für get_config_files_state, get_config_hash, load_config (config.py),
-parse_streamers (daemon.py) und get_extra_args (config.py).
+parse_streamers (daemon.py), get_extra_args (config.py) und
+_is_dedicated_mount (config.py).
 """
 
 from pathlib import Path
@@ -10,6 +11,69 @@ def _write_main_config(tmp_path, content):
     path = tmp_path / "recorder.conf"
     path.write_text(content, encoding="utf-8")
     return path
+
+
+class _FakeStat:
+    def __init__(self, st_dev):
+        self.st_dev = st_dev
+
+
+class TestIsDedicatedMount:
+    """
+    Unterscheidet ein echtes Docker-Volume/Bind-Mount von einem gewöhnlichen,
+    per `mkdir -p` fest ins Image gebackenen Verzeichnis (/storage) - ohne
+    diese Unterscheidung würde ein solches Verzeichnis fälschlich als
+    "gemountet" durchgehen und Aufnahmen liefen unbemerkt gegen den
+    flüchtigen Container-Layer statt auf ein persistentes Volume.
+
+    stat() wird bewusst NICHT pauschal für alle Path-Instanzen ersetzt,
+    sondern mit Fallback auf die echte Methode für nicht getestete Pfade -
+    pytest ruft Path.stat() auch intern für eigene Zwecke auf.
+    """
+
+    def test_returns_false_if_path_does_not_exist(self, config, monkeypatch):
+        monkeypatch.setattr(Path, "is_dir", lambda self: False)
+        assert config._is_dedicated_mount(Path("/storage")) is False
+
+    def test_returns_false_for_plain_baked_in_directory_same_device(self, config, monkeypatch):
+        """Gleiche st_dev wie das Elternverzeichnis = kein echter Mount, nur ein normaler Ordner."""
+        real_stat = Path.stat
+        monkeypatch.setattr(Path, "is_dir", lambda self: True)
+        monkeypatch.setattr(
+            Path, "stat",
+            lambda self: _FakeStat(st_dev=1) if str(self) in ("/storage", "/") else real_stat(self)
+        )
+
+        assert config._is_dedicated_mount(Path("/storage")) is False
+
+    def test_returns_true_for_real_mount_different_device(self, config, monkeypatch):
+        """Unterschiedliche st_dev zum Elternverzeichnis = tatsächlich eingehängtes Volume/Bind-Mount."""
+        real_stat = Path.stat
+        monkeypatch.setattr(Path, "is_dir", lambda self: True)
+
+        def fake_stat(self):
+            if str(self) == "/storage":
+                return _FakeStat(st_dev=2)
+            if str(self) == "/":
+                return _FakeStat(st_dev=1)
+            return real_stat(self)
+
+        monkeypatch.setattr(Path, "stat", fake_stat)
+
+        assert config._is_dedicated_mount(Path("/storage")) is True
+
+    def test_permission_error_on_stat_returns_false(self, config, monkeypatch):
+        real_stat = Path.stat
+        monkeypatch.setattr(Path, "is_dir", lambda self: True)
+
+        def raise_or_real_stat(self):
+            if str(self) in ("/storage", "/"):
+                raise OSError("Permission denied")
+            return real_stat(self)
+
+        monkeypatch.setattr(Path, "stat", raise_or_real_stat)
+
+        assert config._is_dedicated_mount(Path("/storage")) is False
 
 
 class TestConfigHashing:
@@ -82,6 +146,12 @@ class TestLoadConfig:
     def test_falls_back_to_defaults_without_config_file(self, config, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "CONFIG_FILE", tmp_path / "missing.conf")
         monkeypatch.setattr(config, "CONF_D_DIR", tmp_path / "missing-dir")
+        # STORAGE_DIR selbst simuliert den Container-Fall (echtes Volume unter
+        # /storage gemountet) - load_config()'s Fallback-Kette soll dann genau
+        # diesen Wert liefern, unabhängig davon, ob /storage im Testsystem
+        # tatsächlich ein Mount ist (siehe TestIsDedicatedMount für die
+        # Mount-Erkennung selbst).
+        monkeypatch.setattr(config, "STORAGE_DIR", Path("/storage"))
         monkeypatch.delenv("STORAGE_DIR", raising=False)
         monkeypatch.delenv("SLEEP_INTERVAL", raising=False)
 
