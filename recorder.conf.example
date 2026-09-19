@@ -4,7 +4,7 @@
 
 [general]
 # Zielverzeichnis für die Aufnahmen
-# storage_dir = /storage
+# storage_dir = /srv/media-pipeline/recordings
 
 # Prüf-Intervall in Sekunden zwischen den Abfragen
 # sleep_interval = 15

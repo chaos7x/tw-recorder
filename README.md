@@ -33,7 +33,7 @@ Zusätzlich unterstützt die Anwendung modularisierte Konfigurationsdateien: All
 ```ini
 [general]
 # Zielverzeichnis für die Aufnahmen im Container
-storage_dir = /storage
+storage_dir = /srv/media-pipeline/recordings
 
 # Prüf-Intervall in Sekunden zwischen den Abfragen
 sleep_interval = 15
@@ -84,7 +84,7 @@ docker run -d \
   -e TZ=Europe/Berlin \
   -e STREAMLINK_LOGLEVEL=warning \
   -v $(pwd)/config:/etc/tw-recorder:ro \
-  -v $(pwd)/videos:/storage:rw \
+  -v $(pwd)/recordings:/srv/media-pipeline/recordings:rw \
   ghcr.io/chaos7x/tw-recorder:latest
 ```
 
@@ -105,7 +105,7 @@ services:
       - .env
     volumes:
       - ./config:/etc/tw-recorder:ro
-      - ./videos:/storage:rw
+      - ./recordings:/srv/media-pipeline/recordings:rw
 ```
 
 ---
