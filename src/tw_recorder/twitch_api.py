@@ -40,7 +40,7 @@ def get_app_access_token(client_id: str, client_secret: str, force_refresh: bool
             "client_id": client_id,
             "client_secret": client_secret,
             "grant_type": "client_credentials"
-        }).encode("utf-8")
+        }).encode()
 
         req = urllib.request.Request(
             url, 

@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tw_recorder import config
 
@@ -134,7 +134,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                 try:
                     lock_fd = open(lock_file, "a+")  # noqa: SIM115
                     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except (IOError, OSError):
+                except OSError:
                     if lock_fd is not None and not lock_fd.closed:
                         lock_fd.close()
                     time.sleep(sleep_interval)
@@ -295,10 +295,10 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                             # Datum als datetime-Objekt parsen für volle Kompatibilität mit {time:...} Formaten
                             # For DTZ007 (strptime):
                             try:
-                                dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=timezone.utc)
+                                dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=UTC)
                             except ValueError:
                                 # For DTZ005 (datetime.now):
-                                dt_obj = datetime.now(timezone.utc)
+                                dt_obj = datetime.now(UTC)
 
                             try:
                                 target_filename = pattern_tmpl.format(
