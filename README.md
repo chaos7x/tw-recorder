@@ -170,7 +170,7 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 * `TWITCH_USER_TOKEN`: (optional) OAuth Token zur Umgehung von Streamlink-Limits / Ads.
 * `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
 * `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
-* `STORAGE_DIR`: Standard `/storage`. Zielpfad für die gespeicherten Videoaufnahmen.
+* `STORAGE_DIR`: Standard `/storage` im Container (falls dort ein echtes Volume gemountet ist), sonst `/srv/media-pipeline/recordings` auf Bare-Metal - dasselbe Verzeichnis, aus dem `fetchbridge` liest (`SOURCE_DIR`). Das `.deb`-Postinst legt es mit einer gemeinsamen Gruppe (`media-pipeline`) an, damit beide Systemuser darauf zugreifen können.
 * `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben.
 
 ---

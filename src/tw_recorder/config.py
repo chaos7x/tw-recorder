@@ -24,11 +24,6 @@ APP_NAME = "tw-recorder"
 CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/etc/tw-recorder/recorder.conf"))
 CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
 
-# BASE_DIR zeigt auf das Package-Verzeichnis (tw_recorder/); analog zu
-# yt_upload.config.BASE_DIR nur der Bare-Metal-Fallback-Anker, falls
-# /storage kein echtes Docker-Volume ist.
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 def _is_dedicated_mount(path: Path) -> bool:
     """
@@ -55,7 +50,15 @@ def _is_dedicated_mount(path: Path) -> bool:
 # /storage unconditional per `mkdir -p` anlegt - ohne echtes Volume wuerde
 # der Recorder sonst faelschlich "Container-Modus" annehmen und Aufnahmen in
 # den fluechtigen Container-Layer statt auf einen Bare-Metal-Pfad schreiben.
-STORAGE_DIR = Path("/storage") if _is_dedicated_mount(Path("/storage")) else Path(BASE_DIR) / "tw-recorder-data" / "storage"
+#
+# Der Bare-Metal-Fallback zeigt bewusst auf das gemeinsame Uebergabeverzeichnis
+# der Pipeline (/srv/media-pipeline/recordings) statt auf einen rein privaten,
+# Package-relativen Pfad: tw-recorder ist hier nur der Schreiber, fetchbridge
+# liest von genau demselben Pfad (dessen SOURCE_DIR) weiter - identisch zum
+# Docker-Compose-Setup, wo beide Container denselben Host-Pfad mounten. Das
+# .deb-Postinst legt dieses Verzeichnis mit einer gemeinsamen Gruppe an, damit
+# beide Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
+STORAGE_DIR = Path("/storage") if _is_dedicated_mount(Path("/storage")) else Path("/srv/media-pipeline/recordings")
 
 # Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
 # aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
