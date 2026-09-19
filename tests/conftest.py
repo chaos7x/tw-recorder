@@ -84,7 +84,9 @@ def reset_twitch_globals(twitch_api):
     twitch_api.app_token = None
     twitch_api.token_expires_at = 0
     twitch_api.api_unavailable_until = 0.0
+    twitch_api.api_currently_down = False
     yield
     twitch_api.app_token = None
     twitch_api.token_expires_at = 0
     twitch_api.api_unavailable_until = 0.0
+    twitch_api.api_currently_down = False

@@ -22,6 +22,12 @@ token_lock = threading.Lock()
 # Ausfall des Twitch-Helix-Endpunkts.
 api_unavailable_until = 0.0
 api_warning_lock = threading.Lock()
+# Ob der zuletzt bekannte Zustand "Ausfall" war - verhindert bei mehreren
+# gleichzeitig geprüften Kanälen dieselbe "nicht erreichbar"-Warnung mehrfach
+# hintereinander (alle Kanäle scheitern in derselben Sekunde am selben
+# DNS-/Netzwerkfehler) und sorgt für genau eine "wieder erreichbar"-Meldung,
+# sobald der erste Request nach dem Ausfall wieder erfolgreich war.
+api_currently_down = False
 
 
 def get_app_access_token(client_id: str, client_secret: str, force_refresh: bool = False) -> str | None:
@@ -63,7 +69,7 @@ def get_app_access_token(client_id: str, client_secret: str, force_refresh: bool
 
 def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
     """Prüft via Twitch Helix API, ob der Kanal live ist."""
-    global api_unavailable_until
+    global api_unavailable_until, api_currently_down
 
     client_id = cfg["client_id"]
     client_secret = cfg["client_secret"]
@@ -87,6 +93,10 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
                 with urllib.request.urlopen(req, timeout=5) as response:
                     data = json.loads(response.read().decode("utf-8"))
                     streams = data.get("data", [])
+                    with api_warning_lock:
+                        if api_currently_down:
+                            api_currently_down = False
+                            logger.info("✅ Twitch-API wieder erreichbar.")
                     return len(streams) > 0 and streams[0].get("type") == "live"
             except urllib.error.HTTPError as e:
                 if e.code == 401 and retry:
@@ -96,10 +106,12 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
             except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
                 with api_warning_lock:
                     api_unavailable_until = time.monotonic() + 60
-                    logger.warning(
-                        f"Twitch-API vorübergehend nicht erreichbar ({e}). "
-                        "Verwende Streamlink-Fallback für 60 Sekunden."
-                    )
+                    if not api_currently_down:
+                        api_currently_down = True
+                        logger.warning(
+                            f"Twitch-API vorübergehend nicht erreichbar ({e}). "
+                            "Verwende Streamlink-Fallback für 60 Sekunden."
+                        )
 
     # Fallback für Plattformen außer Twitch oder fehlende Keys
     cmd = ["streamlink", "--stream-url"]
@@ -127,7 +139,7 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
     des 800-Punkte/Minute-Limits) - bei üblichen Prüfintervallen (>= 60s)
     vernachlässigbar.
     """
-    global api_unavailable_until
+    global api_unavailable_until, api_currently_down
 
     client_id = cfg["client_id"]
     client_secret = cfg["client_secret"]
@@ -154,6 +166,10 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read().decode("utf-8"))
             streams = data.get("data", [])
+            with api_warning_lock:
+                if api_currently_down:
+                    api_currently_down = False
+                    logger.info("✅ Twitch-API wieder erreichbar.")
             if streams and streams[0].get("type") == "live":
                 return {
                     "online": True,
@@ -170,8 +186,10 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
         with api_warning_lock:
             api_unavailable_until = time.monotonic() + 60
-            logger.warning(
-                f"Twitch-API vorübergehend nicht erreichbar ({e}). "
-                "Titel-Split-Erkennung pausiert für 60 Sekunden."
-            )
+            if not api_currently_down:
+                api_currently_down = True
+                logger.warning(
+                    f"Twitch-API vorübergehend nicht erreichbar ({e}). "
+                    "Titel-Split-Erkennung pausiert für 60 Sekunden."
+                )
         return None

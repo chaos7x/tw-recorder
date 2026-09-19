@@ -191,6 +191,73 @@ class TestCheckStreamOnline:
 
         assert twitch_api.api_unavailable_until > twitch_api.time.monotonic()
 
+    def test_recovery_message_logged_after_outage(self, twitch_api, monkeypatch, caplog):
+        """Nach einem Ausfall muss der nächste erfolgreiche Request eine Recovery-Meldung loggen."""
+        cfg = {**TWITCH_CFG, "user_token": "", "webbrowser": False}
+        call_log = []
+
+        def urlopen_sequence(req, timeout=5):
+            call_log.append(1)
+            if len(call_log) == 1:
+                return FakeHTTPResponse({"access_token": "TOK", "expires_in": 3600})
+            if len(call_log) == 2:
+                raise urllib.error.URLError("timeout")
+            return FakeHTTPResponse({"data": []})
+
+        monkeypatch.setattr(twitch_api.urllib.request, "urlopen", urlopen_sequence)
+        monkeypatch.setattr(
+            twitch_api.subprocess, "run",
+            lambda *a, **k: type("Result", (), {"returncode": 1})()
+        )
+
+        with caplog.at_level("INFO"):
+            # 1. Aufruf: Streams-Request scheitert -> markiert Ausfall
+            twitch_api.check_stream_online("https://twitch.tv/foo", cfg)
+            assert twitch_api.api_currently_down is True
+
+            # Cooldown manuell ablaufen lassen, damit der 2. Aufruf den Streams-Request
+            # tatsächlich erneut versucht statt still den Streamlink-Fallback zu nehmen.
+            twitch_api.api_unavailable_until = 0.0
+
+            # 2. Aufruf: Streams-Request klappt wieder -> Recovery-Meldung
+            twitch_api.check_stream_online("https://twitch.tv/foo", cfg)
+
+        assert twitch_api.api_currently_down is False
+        assert any("wieder erreichbar" in r.message for r in caplog.records)
+
+    def test_second_channel_does_not_repeat_down_warning(self, twitch_api, monkeypatch, caplog):
+        """
+        Simuliert zwei Kanäle, die in derselben Ausfall-Phase geprüft werden -
+        die "nicht erreichbar"-Warnung darf nur beim ersten Fehlschlag erscheinen,
+        nicht bei jedem weiteren Kanal, der auf denselben (bereits bekannten)
+        Ausfall trifft.
+        """
+        cfg = {**TWITCH_CFG, "user_token": "", "webbrowser": False}
+
+        def always_fail(req, timeout=5):
+            if "oauth2/token" in req.full_url:
+                return FakeHTTPResponse({"access_token": "TOK", "expires_in": 3600})
+            raise urllib.error.URLError("timeout")
+
+        monkeypatch.setattr(twitch_api.urllib.request, "urlopen", always_fail)
+        monkeypatch.setattr(
+            twitch_api.subprocess, "run",
+            lambda *a, **k: type("Result", (), {"returncode": 1})()
+        )
+
+        with caplog.at_level("WARNING"):
+            twitch_api.check_stream_online("https://twitch.tv/channel_a", cfg)
+            # Simuliert einen zweiten Kanal, der (z.B. in einem parallelen Thread)
+            # zum selben Zeitpunkt auf denselben, bereits erkannten Ausfall trifft:
+            # api_unavailable_until wird zurückgesetzt, um das ohne echte
+            # Nebenläufigkeit nachzustellen - api_currently_down bleibt bewusst
+            # stehen und muss die Warnung trotzdem unterdrücken.
+            twitch_api.api_unavailable_until = 0.0
+            twitch_api.check_stream_online("https://twitch.tv/channel_b", cfg)
+
+        down_warnings = [r for r in caplog.records if "nicht erreichbar" in r.message]
+        assert len(down_warnings) == 1
+
 
 class TestGetStreamInfo:
     def test_returns_title_and_category_when_live(self, twitch_api, monkeypatch):
