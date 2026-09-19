@@ -15,7 +15,7 @@ services:
     #  - app:/app:ro
     #  - log:/log
       - config:/etc/tw-recorder:ro
-      - storage-all:/storage
+      - storage-all:/srv/media-pipeline/recordings
 
 # ==========================================
 # Healthcheck (optional), ist aktiviert
@@ -62,7 +62,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ./videos
+      device: ./recordings
 
   # --- Vorbereitung für spätere NFS-Mounts ---
   # storage-all:

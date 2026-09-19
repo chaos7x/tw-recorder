@@ -24,6 +24,42 @@ APP_NAME = "tw-recorder"
 CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/etc/tw-recorder/recorder.conf"))
 CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
 
+
+def _is_dedicated_mount(path: Path) -> bool:
+    """
+    Prüft, ob path ein eigener Mountpoint ist (Docker-Volume/Bind-Mount) statt
+    nur ein gewöhnliches Verzeichnis, das das Dockerfile per `mkdir -p` fest
+    ins Image gebacken hat (z.B. /storage) - eine reine is_dir()-Prüfung kann
+    diese beiden Fälle nicht unterscheiden, da `mkdir -p` das Verzeichnis auch
+    ganz ohne jeden Mount anlegt (derselbe Bug wie bei yt-upload: Aufnahmen
+    liefen unbemerkt gegen den flüchtigen Container-Layer statt auf ein
+    tatsächlich persistentes Volume). Vergleicht dazu die Geräte-ID (st_dev)
+    von path und seinem Elternverzeichnis: unterschiedliche st_dev bedeutet,
+    dass dort tatsächlich ein Volume/Bind-Mount eingehängt ist.
+    """
+    if not path.is_dir():
+        return False
+    try:
+        return path.stat().st_dev != path.parent.stat().st_dev
+    except OSError:
+        return False
+
+
+# Dynamic Path Detection: Docker-Volume (/storage) vs. Bare-Metal-Host.
+# _is_dedicated_mount() statt blosser Existenzpruefung, da das Dockerfile
+# /storage unconditional per `mkdir -p` anlegt - ohne echtes Volume wuerde
+# der Recorder sonst faelschlich "Container-Modus" annehmen und Aufnahmen in
+# den fluechtigen Container-Layer statt auf einen Bare-Metal-Pfad schreiben.
+#
+# Der Bare-Metal-Fallback zeigt bewusst auf das gemeinsame Uebergabeverzeichnis
+# der Pipeline (/srv/media-pipeline/recordings) statt auf einen rein privaten,
+# Package-relativen Pfad: tw-recorder ist hier nur der Schreiber, fetchbridge
+# liest von genau demselben Pfad (dessen SOURCE_DIR) weiter - identisch zum
+# Docker-Compose-Setup, wo beide Container denselben Host-Pfad mounten. Das
+# .deb-Postinst legt dieses Verzeichnis mit einer gemeinsamen Gruppe an, damit
+# beide Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
+STORAGE_DIR = Path("/storage") if _is_dedicated_mount(Path("/storage")) else Path("/srv/media-pipeline/recordings")
+
 # Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
 # aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
 # leichtgewichtiger Aufruf desselben Skripts (--healthcheck) prüft nur, ob
@@ -92,7 +128,7 @@ def load_config():
             logger.warning(f"Fehler beim Lesen der Config-Dateien: {e}")
 
     # General / Output Settings
-    storage_dir = Path(config.get("general", "storage_dir", fallback=os.getenv("STORAGE_DIR", "/storage")))
+    storage_dir = Path(config.get("general", "storage_dir", fallback=os.getenv("STORAGE_DIR", str(STORAGE_DIR))))
     sleep_interval = int(config.get("general", "sleep_interval", fallback=os.getenv("SLEEP_INTERVAL", "15")))
     filename_pattern = config.get("general", "filename_pattern", fallback=os.getenv("OUTPUT_FILENAME_PATTERN", "{time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv"))
     log_file = config.get("general", "log_file", fallback=os.getenv("LOG_FILE", "")).strip()

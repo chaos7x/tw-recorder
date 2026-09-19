@@ -33,7 +33,7 @@ Zusätzlich unterstützt die Anwendung modularisierte Konfigurationsdateien: All
 ```ini
 [general]
 # Zielverzeichnis für die Aufnahmen im Container
-storage_dir = /storage
+storage_dir = /srv/media-pipeline/recordings
 
 # Prüf-Intervall in Sekunden zwischen den Abfragen
 sleep_interval = 15
@@ -84,7 +84,7 @@ docker run -d \
   -e TZ=Europe/Berlin \
   -e STREAMLINK_LOGLEVEL=warning \
   -v $(pwd)/config:/etc/tw-recorder:ro \
-  -v $(pwd)/videos:/storage:rw \
+  -v $(pwd)/recordings:/srv/media-pipeline/recordings:rw \
   ghcr.io/chaos7x/tw-recorder:latest
 ```
 
@@ -105,7 +105,7 @@ services:
       - .env
     volumes:
       - ./config:/etc/tw-recorder:ro
-      - ./videos:/storage:rw
+      - ./recordings:/srv/media-pipeline/recordings:rw
 ```
 
 ---
@@ -170,7 +170,7 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 * `TWITCH_USER_TOKEN`: (optional) OAuth Token zur Umgehung von Streamlink-Limits / Ads.
 * `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
 * `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
-* `STORAGE_DIR`: Standard `/storage`. Zielpfad für die gespeicherten Videoaufnahmen.
+* `STORAGE_DIR`: Standard `/storage` im Container (falls dort ein echtes Volume gemountet ist), sonst `/srv/media-pipeline/recordings` auf Bare-Metal - dasselbe Verzeichnis, aus dem `fetchbridge` liest (`SOURCE_DIR`). Das `.deb`-Postinst legt es mit einer gemeinsamen Gruppe (`media-pipeline`) an, damit beide Systemuser darauf zugreifen können.
 * `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben.
 
 ---

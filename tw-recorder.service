@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=simple
 User=tw-recorder
 Group=tw-recorder
+SupplementaryGroups=media-pipeline
 ExecStart=/usr/bin/tw-recorder -D
 Restart=on-failure
 RestartSec=5
