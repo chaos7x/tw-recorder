@@ -5,58 +5,90 @@ Dieses Dokument beschreibt den Aufbau von `tw-recorder` auf Modulebene: welche K
 ## Überblick
 
 ```mermaid
-flowchart TB
-    BETREIBER(("Betreiber")) -->|startet CLI -D| MAIN
-    PROBE(("Health Probe")) -->|prüft Health --healthcheck| MAIN
+flowchart TD
 
-    subgraph LZ["Laufzeitsteuerung"]
-        MAIN["CLI Einstieg<br/>[main.py]"]
-        LOG["Logging Setup<br/>[logging_setup.py]"]
-        DAEMON["Kanal-Daemon<br/>[daemon.py]"]
-        HEALTH["Heartbeat Healthcheck<br/>[healthcheck.py]"]
-        MAIN -->|initialisiert Logging| LOG
-        MAIN -->|startet Daemon| DAEMON
-        MAIN -->|führt Healthcheck aus| HEALTH
-        DAEMON -->|schreibt Heartbeat| HEALTH
-    end
+subgraph group_cli_runtime["CLI und Laufzeit"]
+  node_main_cli["CLI Einstieg<br/>[main.py]"]
+  node_daemon_manager["Daemon Manager<br/>[daemon.py]"]
+end
 
-    subgraph KONF["Konfiguration"]
-        CFG["Konfigurationsloader<br/>[config.py]"]
-        INI["INI Konfigurationsdateien<br/>recorder.conf + conf.d/*.conf"]
-        CFG -->|liest Dateien| INI
-    end
+subgraph group_configuration["Konfiguration"]
+  node_config_loader["Konfigurationslader<br/>[config.py]"]
+  node_config_reload["Hot Reload<br/>[config.py]"]
+  node_secret_check["Secret-Prüfung<br/>[config.py]"]
+end
 
-    MAIN -->|lädt Konfiguration| CFG
-    DAEMON -->|synchronisiert Kanäle| CFG
-    DAEMON -->|prüft Änderungen Config-Hash| CFG
-    HEALTH -->|liest Health-Pfade| CFG
+subgraph group_acquisition["Stream-Erfassung"]
+  node_recording_loop["Aufnahme-Schleife<br/>[recorder.py]"]
+  node_twitch_api["Twitch API<br/>[twitch_api.py]"]
+  node_record_lock["Aufnahme-Sperre<br/>[recorder.py]"]
+end
 
-    subgraph AA["Aufnahmeausgabe"]
-        REC["Aufnahme-Schleife<br/>[recorder.py]"]
-        LOCK[("Aufnahme-Lock<br/>.record.lock")]
-        TS[("TS Aufnahmen")]
-        MKV[("MKV Speicher")]
-        REC -->|sperrt Kanal| LOCK
-    end
+subgraph group_media_output["Medienausgabe"]
+  node_ts_files["TS-Aufnahmen"]
+  node_mkv_files["MKV-Aufnahmen"]
+end
 
-    DAEMON -->|startet Threads pro Kanal| REC
-    REC -->|liest Einstellungen| CFG
+subgraph group_observability["Betrieb und Status"]
+  node_heartbeat_writer["Heartbeat-Schreiber<br/>[healthcheck.py]"]
+  node_healthcheck["Healthcheck<br/>[healthcheck.py]"]
+  node_heartbeat_file["Heartbeat-Datei"]
+  node_logging_setup["Logging Setup<br/>[logging_setup.py]"]
+  node_log_output["Log-Ausgabe"]
+end
 
-    subgraph SE["Stream-Erkennung"]
-        API["Twitch API Adapter<br/>[twitch_api.py]"]
-    end
+node_operator(("Operator"))
+node_twitch_service["Twitch Helix"]
+node_streamlink_cli["Streamlink CLI"]
+node_ffmpeg_cli["FFmpeg CLI"]
 
-    REC -->|prüft Streamstatus| API
-    REC -->|prüft Titeländerung| API
-    API -->|fragt Helix ab| HELIX["Twitch Helix"]
-    API -.->|nutzt Fallback| STREAMLINK["Streamlink CLI"]
+node_operator -->|"startet CLI"| node_main_cli
+node_main_cli -->|"startet Prüfung"| node_healthcheck
+node_main_cli -->|"lädt Konfiguration"| node_config_loader
+node_main_cli -->|"richtet Logging ein"| node_logging_setup
+node_main_cli -->|"startet Daemon"| node_daemon_manager
+node_daemon_manager -->|"liest Kanäle"| node_config_loader
+node_daemon_manager -->|"prüft Änderungen"| node_config_reload
+node_daemon_manager -->|"prüft Secrets"| node_secret_check
+node_daemon_manager -->|"startet Threads"| node_recording_loop
+node_recording_loop -->|"prüft Status"| node_twitch_api
+node_twitch_api -->|"fragt Helix ab"| node_twitch_service
+node_twitch_api -.->|"nutzt Fallback"| node_streamlink_cli
+node_recording_loop -->|"akquiriert Lock"| node_record_lock
+node_recording_loop -->|"startet Aufnahme"| node_streamlink_cli
+node_streamlink_cli -->|"schreibt TS"| node_ts_files
+node_recording_loop -->|"prüft Metadaten"| node_twitch_api
+node_recording_loop -->|"startet Remux"| node_ffmpeg_cli
+node_ffmpeg_cli -->|"schreibt MKV"| node_mkv_files
+node_daemon_manager -->|"schreibt Heartbeat"| node_heartbeat_writer
+node_heartbeat_writer -->|"aktualisiert Datei"| node_heartbeat_file
+node_healthcheck -->|"liest Datei"| node_heartbeat_file
+node_logging_setup -->|"schreibt Logs"| node_log_output
 
-    REC -->|startet Aufnahme| STREAMLINK
-    STREAMLINK -->|schreibt TS| TS
+click node_main_cli "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/main.py"
+click node_daemon_manager "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/daemon.py"
+click node_recording_loop "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/recorder.py"
+click node_config_loader "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/config.py"
+click node_config_reload "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/config.py"
+click node_secret_check "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/config.py"
+click node_twitch_api "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/twitch_api.py"
+click node_record_lock "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/recorder.py"
+click node_heartbeat_writer "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/healthcheck.py"
+click node_healthcheck "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/healthcheck.py"
+click node_logging_setup "https://github.com/chaos7x/tw-recorder/blob/main/src/tw_recorder/logging_setup.py"
 
-    FFMPEG["FFmpeg Remuxer"] -->|liest TS| TS
-    REC -->|startet Remux| FFMPEG
-    FFMPEG -->|schreibt MKV| MKV
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_main_cli,node_daemon_manager toneBlue
+class node_config_loader,node_config_reload,node_secret_check toneAmber
+class node_recording_loop,node_twitch_api,node_record_lock toneMint
+class node_ts_files,node_mkv_files toneRose
+class node_heartbeat_writer,node_healthcheck,node_heartbeat_file,node_logging_setup,node_log_output,node_operator,node_twitch_service,node_streamlink_cli,node_ffmpeg_cli toneIndigo
 ```
 
 ## Komponenten
