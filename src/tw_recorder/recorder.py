@@ -134,7 +134,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                 try:
                     lock_fd = open(lock_file, "a+")  # noqa: SIM115
                     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except (IOError, OSError):
+                except OSError:
                     if lock_fd is not None and not lock_fd.closed:
                         lock_fd.close()
                     time.sleep(sleep_interval)
