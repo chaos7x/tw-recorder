@@ -2,12 +2,34 @@
 name = "tw-recorder"
 version = "1.4.0"
 description = "Multi-Channel Twitch-Stream-Recorder (Streamlink + FFmpeg)"
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    {name = "chaos7x"},
+]
+keywords = ["twitch", "stream", "recorder", "streamlink", "ffmpeg", "vod", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video :: Capture",
+]
 # Keine Dependencies: tw-recorder.py nutzt ausschließlich die Standardbibliothek
 # (urllib statt requests). streamlink ist ein separates CLI-Tool, das per
 # Subprocess aufgerufen wird - kein Python-Import, daher keine pyproject.toml-
 # Dependency, sondern eigenständig per pip installiert (siehe Dockerfiles).
+
+[project.urls]
+Homepage = "https://github.com/chaos7x/tw-recorder"
+Repository = "https://github.com/chaos7x/tw-recorder"
+Issues = "https://github.com/chaos7x/tw-recorder/issues"
 
 [project.scripts]
 tw-recorder = "tw_recorder.main:main"
