@@ -135,7 +135,7 @@ Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält
 
 ```bash
 wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder_<version>_all.deb
-apt install ./tw-recorder_<version>_all.deb
+apt install -t trixie-backports ./tw-recorder_<version>_all.deb
 ```
 
 Das Paket legt einen dedizierten Systemuser (`tw-recorder`) und einen systemd-Service an, startet ihn aber bewusst nicht automatisch - erst `/etc/tw-recorder/recorder.conf` (bzw. `conf.d/`) anpassen, dann:
