@@ -83,8 +83,8 @@ ENV PYTHONPATH=/usr/local/lib/tw-recorder:/usr/local/lib/streamlink
 # daher müssen beide Verzeichnisse für jede UID beschreibbar bleiben. Das
 # Sticky-Bit (wie bei /tmp) verhindert aber, dass ein Prozess/Nutzer Dateien
 # löschen oder umbenennen kann, die ein anderer angelegt hat.
-RUN mkdir -p /storage /log /etc/tw-recorder/conf.d /srv/media-pipeline/recordings \
-    && chmod 1777 /storage /log /srv/media-pipeline/recordings
+RUN mkdir -p /log /etc/tw-recorder/conf.d /srv/media-pipeline/recordings \
+    && chmod 1777 /log /srv/media-pipeline/recordings
 
 # ------------------------------------------
 # LAYER 4: tw_recorder + streamlink aus dem Builder übernehmen

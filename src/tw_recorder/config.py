@@ -25,40 +25,15 @@ CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/etc/tw-recorder/recorder.conf"))
 CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
 
 
-def _is_dedicated_mount(path: Path) -> bool:
-    """
-    Prüft, ob path ein eigener Mountpoint ist (Docker-Volume/Bind-Mount) statt
-    nur ein gewöhnliches Verzeichnis, das das Dockerfile per `mkdir -p` fest
-    ins Image gebacken hat (z.B. /storage) - eine reine is_dir()-Prüfung kann
-    diese beiden Fälle nicht unterscheiden, da `mkdir -p` das Verzeichnis auch
-    ganz ohne jeden Mount anlegt (derselbe Bug wie bei yt-upload: Aufnahmen
-    liefen unbemerkt gegen den flüchtigen Container-Layer statt auf ein
-    tatsächlich persistentes Volume). Vergleicht dazu die Geräte-ID (st_dev)
-    von path und seinem Elternverzeichnis: unterschiedliche st_dev bedeutet,
-    dass dort tatsächlich ein Volume/Bind-Mount eingehängt ist.
-    """
-    if not path.is_dir():
-        return False
-    try:
-        return path.stat().st_dev != path.parent.stat().st_dev
-    except OSError:
-        return False
-
-
-# Dynamic Path Detection: Docker-Volume (/storage) vs. Bare-Metal-Host.
-# _is_dedicated_mount() statt blosser Existenzpruefung, da das Dockerfile
-# /storage unconditional per `mkdir -p` anlegt - ohne echtes Volume wuerde
-# der Recorder sonst faelschlich "Container-Modus" annehmen und Aufnahmen in
-# den fluechtigen Container-Layer statt auf einen Bare-Metal-Pfad schreiben.
-#
-# Der Bare-Metal-Fallback zeigt bewusst auf das gemeinsame Uebergabeverzeichnis
-# der Pipeline (/srv/media-pipeline/recordings) statt auf einen rein privaten,
-# Package-relativen Pfad: tw-recorder ist hier nur der Schreiber, fetchbridge
-# liest von genau demselben Pfad (dessen SOURCE_DIR) weiter - identisch zum
-# Docker-Compose-Setup, wo beide Container denselben Host-Pfad mounten. Das
-# .deb-Postinst legt dieses Verzeichnis mit einer gemeinsamen Gruppe an, damit
-# beide Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
-STORAGE_DIR = Path("/storage") if _is_dedicated_mount(Path("/storage")) else Path("/srv/media-pipeline/recordings")
+# STORAGE_DIR zeigt einheitlich (Docker wie Bare-Metal) auf das gemeinsame
+# Uebergabeverzeichnis der Pipeline statt auf einen rein privaten,
+# Package-relativen Pfad oder den inzwischen abgeloesten /storage-Mountpunkt:
+# tw-recorder ist hier nur der Schreiber, fetchbridge liest von genau
+# demselben Pfad (dessen SOURCE_DIR) weiter - identisch zum Docker-Compose-
+# Setup, wo beide Container denselben Host-Pfad mounten. Das .deb-Postinst
+# legt dieses Verzeichnis mit einer gemeinsamen Gruppe an, damit beide
+# Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
+STORAGE_DIR = Path("/srv/media-pipeline/recordings")
 
 # Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
 # aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
