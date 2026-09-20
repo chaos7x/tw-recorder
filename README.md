@@ -6,6 +6,8 @@ Das Tool prüft regelmäßig konfigurierte Kanäle, zeichnet Live-Streams in Ech
 
 Eine Übersicht der internen Architektur (Module, Datenfluss, Diagramm) findet sich in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+> **⚠️ Streamlink-Version:** Für Twitch wird mindestens **Streamlink >= 8.2.0** benötigt - ältere Versionen scheitern an Twitch-seitigen API-Änderungen und liefern keine Streams mehr. Das mitgelieferte Docker-Image zieht bei jedem Build automatisch die aktuelle PyPI-Version, betrifft also nur eine manuelle Bare-Metal-Installation mit bereits vorhandenem, veraltetem Streamlink.
+
 ---
 
 ## ✨ Features
@@ -119,19 +121,21 @@ apt install python3-pip python3-setuptools ffmpeg
 pip install --break-system-packages --no-deps .
 
 # streamlink separat installieren (eigenständiges CLI-Tool, kein Python-Import
-# von tw-recorder - braucht echte PyPI-Dependency-Auflösung, daher OHNE --no-deps)
-pip install --break-system-packages streamlink
+# von tw-recorder - braucht echte PyPI-Dependency-Auflösung, daher OHNE --no-deps).
+# Version >= 8.2.0 zwingend, sonst funktioniert Twitch nicht (siehe Hinweis oben) -
+# apt/apk-Pakete sind dafür i.d.R. zu alt, deshalb bewusst über pip statt System-Paket.
+pip install --break-system-packages "streamlink>=8.2.0"
 ```
 
 Danach steht `tw-recorder --version` systemweit zur Verfügung.
 
 ### Alternative: Fertiges Debian-Paket (.deb)
 
-Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält zusätzlich ein `tw-recorder_<version>_all.deb` als Anhang - keine manuelle `pip`-Installation nötig, `apt`/`dpkg` löst die Abhängigkeiten (`streamlink`, `ffmpeg`) automatisch mit auf:
+Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält zusätzlich ein `tw-recorder_<version>_all.deb` als Anhang - keine manuelle `pip`-Installation nötig, `apt`/`dpkg` löst die Abhängigkeiten (`streamlink`, `ffmpeg`) automatisch mit auf. **Achtung:** Das `streamlink`-Paket aus den Debian/Ubuntu-Repos ist oft älter als die oben geforderte Version 8.2.0 - im Zweifel danach `pip install --break-system-packages --upgrade "streamlink>=8.2.0"` ausführen, um die apt-Version zu überschreiben:
 
 ```bash
 wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder_<version>_all.deb
-apt install ./tw-recorder_<version>_all.deb
+apt install -t trixie-backports ./tw-recorder_<version>_all.deb
 ```
 
 Das Paket legt einen dedizierten Systemuser (`tw-recorder`) und einen systemd-Service an, startet ihn aber bewusst nicht automatisch - erst `/etc/tw-recorder/recorder.conf` (bzw. `conf.d/`) anpassen, dann:
@@ -142,7 +146,7 @@ systemctl enable --now tw-recorder
 
 ### Alternative: Standalone .pyz (kein pip nötig)
 
-`./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein:
+`./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein (Version >= 8.2.0, siehe Hinweis oben):
 
 ```bash
 ./build-pyz.sh
