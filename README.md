@@ -138,10 +138,16 @@ wget https://github.com/chaos7x/tw-recorder/releases/latest/download/tw-recorder
 apt install -t trixie-backports ./tw-recorder_<version>_all.deb
 ```
 
-Das Paket legt einen dedizierten Systemuser (`tw-recorder`) und einen systemd-Service an, startet ihn aber bewusst nicht automatisch - erst `/etc/tw-recorder/recorder.conf` (bzw. `conf.d/`) anpassen, dann:
+Das Paket legt einen dedizierten Systemuser (`tw-recorder`) an und startet den Dienst bewusst nicht automatisch - erst `/etc/tw-recorder/recorder.conf` (bzw. `conf.d/`) anpassen, dann:
 
 ```bash
 systemctl enable --now tw-recorder
+```
+
+**Devuan / Debian ohne systemd (`sysvinit-core`):** Das Paket bringt zusätzlich ein klassisches `/etc/init.d/tw-recorder`-Skript mit, das `postinst` automatisch anstelle des systemd-Service registriert, wenn kein systemd läuft:
+
+```bash
+service tw-recorder start
 ```
 
 ### Alternative: Standalone .pyz (kein pip nötig)
