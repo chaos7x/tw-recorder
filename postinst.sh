@@ -24,17 +24,27 @@ chmod 2775 /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipelin
 
 # /run/systemd/system existiert nur, wenn systemd tatsaechlich als Init-System
 # laeuft (nicht z.B. in einem Chroot/Container-Build ohne systemd) - ohne
-# diese Absicherung wuerde die Paketinstallation dort fehlschlagen.
+# diese Absicherung wuerde die Paketinstallation dort fehlschlagen. Auf einem
+# Nicht-systemd-Host (Devuan, Debian mit sysvinit-core) wird stattdessen das
+# mitgelieferte /etc/init.d/tw-recorder per update-rc.d registriert - beide
+# Zweige schliessen sich damit gegenseitig aus, es wird nie beides parallel
+# verwaltet.
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+elif command -v update-rc.d >/dev/null 2>&1; then
+    update-rc.d tw-recorder defaults >/dev/null
 fi
 
 echo ""
-echo "tw-recorder wurde installiert, der systemd-Service ist aber noch NICHT aktiviert."
+echo "tw-recorder wurde installiert, der Dienst ist aber noch NICHT aktiviert."
 echo "Bitte zuerst /etc/tw-recorder/recorder.conf ([channels] etc.) anpassen,"
 echo "dann den Dienst manuell aktivieren und starten:"
 echo ""
-echo "    systemctl enable --now tw-recorder"
+if [ -d /run/systemd/system ]; then
+    echo "    systemctl enable --now tw-recorder"
+else
+    echo "    service tw-recorder start"
+fi
 echo ""
 
 exit 0
