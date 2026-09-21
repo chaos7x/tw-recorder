@@ -13,5 +13,42 @@ ExecStart=/usr/bin/tw-recorder -D
 Restart=on-failure
 RestartSec=5
 
+# --- Hardening ---
+# ReadWritePaths deckt genau das ab, was der Daemon tatsaechlich beschreibt:
+# /srv/media-pipeline (STORAGE_DIR inkl. .record.lock-Dateien) und
+# /var/log/tw-recorder (Standard-Logpfad). Wer abweichende Pfade konfiguriert
+# (log_file/storage_dir/...), muss sie hier ergaenzen, sonst schlaegt der
+# jeweilige Schreibzugriff fehl.
+#
+# BEWUSST WEGGELASSEN: RestrictAddressFamilies - anders als bei yt-upload/
+# fetchbridge (reiner Python-Code mit bekanntem Socket-Bedarf) startet dieser
+# Dienst mit streamlink/ffmpeg externe, komplexe Subprozesse, deren
+# vollstaendiger Socket-Bedarf sich ohne einen echten Testlauf nicht
+# verlaesslich verifizieren laesst (RestrictAddressFamilies wird von execve()
+# an Kindprozesse vererbt).
+#
+# ACHTUNG bei `webbrowser = true` (Streamlink-Option fuer Captcha-/Auth-
+# Umgehung per Playwright-Chromium, Standard ist `false`, siehe
+# recorder.conf.example): Chromiums eigenes Sandboxing braucht eigene
+# Namespaces - in diesem Fall zusaetzlich HOME auf ein beschreibbares
+# Verzeichnis setzen und RestrictNamespaces/NoNewPrivileges/
+# MemoryDenyWriteExecute unten ggf. lockern oder entfernen.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/media-pipeline /var/log/tw-recorder
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+
 [Install]
 WantedBy=multi-user.target
