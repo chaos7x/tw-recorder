@@ -1,5 +1,5 @@
 """
-Tests für _parse_recorded_filename() (recorder.py).
+Tests für _parse_recorded_filename() und _write_xattrs() (recorder.py).
 
 Der alte naive "_"-Split zwischen Kategorie und Titel (cat_title_parts =
 rest_after_channel.split("_", 1)) hat mehrteilige Kategorienamen falsch
@@ -8,6 +8,10 @@ Leerzeichen-Ersetzung) - der erste Wortteil landete als "Kategorie", der Rest
 fälschlich im Titel. Die Kategorie wird jetzt in eckigen Klammern kodiert
 (siehe out_pattern in record_loop()), was die Trennung eindeutig macht.
 """
+
+import os
+
+import pytest
 
 
 class TestParseRecordedFilename:
@@ -73,3 +77,60 @@ class TestParseRecordedFilename:
         assert channel == "somechannel"
         assert category  # kein Crash, irgendein Fallback-Wert
         assert title
+
+
+class TestWriteXattrs:
+    """
+    Dieselben Extended Attributes (dublincore/xdg-Namensschema), die auch
+    yt-dlp per --xattrs schreibt - zusätzlich zu den ffmpeg-Container-Tags,
+    nicht als deren Ersatz (siehe _write_xattrs()-Docstring).
+    """
+
+    def test_sets_all_attributes_on_supported_filesystem(self, recorder, tmp_path):
+        target = tmp_path / "recording.mkv"
+        target.write_bytes(b"dummy")
+        attrs = {
+            "user.dublincore.title": "somechannel - Just Chatting: Cool Title (2026-09-17)",
+            "user.dublincore.contributor": "somechannel",
+            "user.dublincore.date": "2026-09-17",
+            "user.dublincore.description": "Cool Title",
+            "user.xdg.referrer.url": "https://twitch.tv/somechannel",
+        }
+
+        try:
+            recorder._write_xattrs(target, attrs)
+        except OSError as e:
+            pytest.skip(f"Dateisystem unterstützt keine Extended Attributes: {e}")
+
+        for name, value in attrs.items():
+            assert os.getxattr(target, name) == value.encode("utf-8")
+
+    def test_unsupported_filesystem_logs_warning_without_raising(self, recorder, tmp_path, monkeypatch, caplog):
+        target = tmp_path / "recording.mkv"
+        target.write_bytes(b"dummy")
+
+        def raise_not_supported(*args, **kwargs):
+            raise OSError("Operation not supported")
+
+        monkeypatch.setattr(recorder.os, "setxattr", raise_not_supported)
+
+        with caplog.at_level("WARNING"):
+            recorder._write_xattrs(target, {"user.dublincore.title": "Cool Title"})
+
+        assert "konnte nicht" in caplog.text
+
+    def test_stops_after_first_failure_instead_of_retrying_each_attribute(self, recorder, tmp_path, monkeypatch):
+        target = tmp_path / "recording.mkv"
+        target.write_bytes(b"dummy")
+        call_count = 0
+
+        def raise_always(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise OSError("Operation not supported")
+
+        monkeypatch.setattr(recorder.os, "setxattr", raise_always)
+
+        recorder._write_xattrs(target, {"a": "1", "b": "2", "c": "3"})
+
+        assert call_count == 1
