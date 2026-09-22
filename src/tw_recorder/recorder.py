@@ -1,6 +1,7 @@
 """Kern der Aufnahme-Schleife: Streamlink-Subprocess, Monitoring, FFmpeg-Remux."""
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -92,6 +93,30 @@ def _parse_recorded_filename(full_stem: str, channel: str) -> tuple[str, str, st
     full_title = raw_title or "Untitled"
 
     return date_str, time_str, parsed_channel, category, full_title
+
+
+def _write_xattrs(path, attrs: dict[str, str]) -> None:
+    """
+    Setzt dieselben Extended Attributes (Namensschema: dublincore/xdg), die
+    auch yt-dlp per --xattrs schreibt - so behandeln Dateimanager/Tools
+    Twitch-Aufnahmen und yt-dlp-Downloads einheitlich. Rein zusätzlich zu den
+    ffmpeg-Container-Tags (nicht deren Ersatz): xattrs bleiben unabhängig vom
+    Container lesbar (z.B. auch bei einer kaputten/unvollständigen Datei) und
+    lassen sich nachträglich ändern, ohne die - bei mehrstündigen Aufnahmen
+    ggf. sehr große - Datei per ffmpeg neu schreiben zu müssen.
+    Nicht jedes Dateisystem unterstützt xattrs (z.B. FAT/exFAT, manche
+    Netzwerk-Mounts) - ein OSError dabei ist keine echte Fehlfunktion, wird
+    daher nur als Warnung geloggt statt die Aufnahme fehlschlagen zu lassen.
+    """
+    for name, value in attrs.items():
+        try:
+            os.setxattr(path, name, value.encode("utf-8"))
+        except OSError as e:
+            logger.warning(
+                f"xattr '{name}' konnte nicht auf {path.name} gesetzt werden "
+                f"(Dateisystem unterstützt evtl. keine Extended Attributes): {e}"
+            )
+            return
 
 
 def record_loop(url: str, quality: str, stop_event: threading.Event):
@@ -368,6 +393,13 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                                 if latest_file.exists():
                                     latest_file.unlink()
                                 logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
+                                _write_xattrs(final_target_path, {
+                                    "user.dublincore.title": meta_title,
+                                    "user.dublincore.contributor": parsed_channel,
+                                    "user.dublincore.date": date_str,
+                                    "user.dublincore.description": meta_comment,
+                                    "user.xdg.referrer.url": f"https://twitch.tv/{parsed_channel}",
+                                })
                 except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
                     logger.warning(f"Fehler beim FFmpeg-Remuxing für {channel}: {e}")
 
