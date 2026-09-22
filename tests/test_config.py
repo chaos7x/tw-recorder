@@ -126,6 +126,42 @@ class TestLoadConfig:
         assert cfg["config_obj"].has_option("channels", "goodchannel")
         assert cfg["config_obj"].has_option("channels", "morechannel")
 
+    def test_unreadable_conf_d_file_is_skipped_with_a_warning(self, config, tmp_path, monkeypatch, caplog):
+        """
+        Regression: config.read(f, ...) laesst configparser die Datei selbst
+        oeffnen - ein dabei auftretender OSError (z.B. Permission denied,
+        real reproduziert: eine conf.d-Datei gehoerte einem persoenlichen
+        User statt der erwarteten Gruppe) wird von ConfigParser.read()
+        INTERN abgefangen und NIE an aufrufenden Code durchgereicht. Die
+        Datei wurde dadurch komplett kommentarlos ignoriert, ohne jede
+        Log-Warnung. Fix: die Datei selbst oeffnen (config.read_file()),
+        damit ein Berechtigungsfehler in unser eigenes except laeuft.
+        """
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[channels]\nmainchannel = best\n")
+        unreadable = conf_d / "secret.conf"
+        unreadable.write_text("[channels]\nsecretchannel = best\n", encoding="utf-8")
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        real_open = open
+
+        def fake_open(path, *args, **kwargs):
+            if str(path) == str(unreadable):
+                raise PermissionError(13, "Permission denied", str(unreadable))
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(config, "open", fake_open, raising=False)
+
+        with caplog.at_level("WARNING"):
+            cfg = config.load_config()
+
+        assert cfg["config_obj"].has_option("channels", "mainchannel")
+        assert not cfg["config_obj"].has_option("channels", "secretchannel")
+        assert "secret.conf" in caplog.text
+
 
 class TestParseStreamers:
     """parse_streamers() lebt in daemon.py, ruft intern aber config.load_config()

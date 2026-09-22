@@ -102,9 +102,18 @@ def load_config():
     # stillschweigend gar nicht mehr gelesen wird - ein Tippfehler in einer
     # frühen conf.d-Datei würde sonst alle alphabetisch späteren unsichtbar
     # deaktivieren, ohne dass das aus der Warnung ersichtlich wäre.
+    # Und bewusst config.read_file() auf einem selbst geöffneten Handle statt
+    # config.read(f, ...): Letzteres öffnet die Datei intern und FÄNGT einen
+    # dabei auftretenden OSError (z.B. Permission denied, falls eine
+    # conf.d-Datei versehentlich dem falschen User/einer falschen Gruppe
+    # gehört) STILL AB, ohne ihn je an aufrufenden Code durchzureichen - das
+    # except unten würde so einen Fall nie sehen, die Datei würde ohne jede
+    # Warnung einfach ignoriert. Mit dem eigenen open() landet ein
+    # Berechtigungsfehler dagegen in unserem eigenen except.
     for f in config_files:
         try:
-            config.read(f, encoding="utf-8")
+            with open(f, encoding="utf-8") as fp:
+                config.read_file(fp, source=str(f))
         except (OSError, configparser.Error, UnicodeDecodeError) as e:
             logger.warning(f"Fehler beim Lesen von {f}: {e}")
 
