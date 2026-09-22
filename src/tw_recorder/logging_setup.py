@@ -10,6 +10,26 @@ from tw_recorder.config import APP_NAME
 
 logger = logging.getLogger(__name__)
 
+_VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _resolve_log_level() -> int:
+    """
+    Ermittelt das Log-Level nach Priorität:
+    1. LOG_LEVEL (DEBUG/INFO/WARNING/ERROR/CRITICAL, case-insensitive) - die
+       flexible Variante, einheitlich mit fetchbridge.
+    2. DEBUG=true/yes/1 (case-insensitive) - reine Kurzform für LOG_LEVEL=DEBUG,
+       nur als Default falls LOG_LEVEL NICHT gesetzt ist.
+    3. Fallback INFO, auch bei einem ungültigen LOG_LEVEL-Wert (kein Absturz
+       wegen eines Tippfehlers in der Config/ENV).
+    """
+    debug_enabled = os.getenv("DEBUG", "").strip().lower() in ("true", "yes", "1")
+    default_level_name = "DEBUG" if debug_enabled else "INFO"
+    level_name = os.getenv("LOG_LEVEL", "").strip().upper() or default_level_name
+    if level_name not in _VALID_LOG_LEVELS:
+        level_name = default_level_name
+    return getattr(logging, level_name)
+
 
 def _is_syslog_daemon_running() -> bool:
     """
@@ -116,13 +136,16 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
       (Standard-Debian-Konvention, siehe mitgeliefertes
       /etc/logrotate.d/tw-recorder) - zwei unabhängige Rotationsmechanismen
       auf derselben Datei würden sich nur gegenseitig ins Gehege kommen.
-    - Log-Level per ENV-Variable DEBUG steuerbar (true/yes/1, case-insensitive).
+    - Log-Level per ENV-Variable LOG_LEVEL steuerbar (DEBUG/INFO/WARNING/
+      ERROR/CRITICAL, case-insensitive) - siehe _resolve_log_level().
+      DEBUG=true/yes/1 bleibt als abwärtskompatible Kurzform für
+      LOG_LEVEL=DEBUG nutzbar, eine explizit gesetzte LOG_LEVEL hat aber
+      immer Vorrang.
     - HTTP-Bibliotheks-Logger werden unabhängig vom eigenen Level auf
       WARNING gedrosselt, damit Connection-Pool-Rauschen nicht das
       eigentliche Debug-Logging zumüllt.
     """
-    debug_enabled = os.getenv("DEBUG", "").strip().lower() in ("true", "yes", "1")
-    level = logging.DEBUG if debug_enabled else logging.INFO
+    level = _resolve_log_level()
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)

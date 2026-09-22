@@ -200,7 +200,8 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 * `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
 * `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
 * `STORAGE_DIR`: Standard `/srv/media-pipeline/recordings`, einheitlich für Docker und Bare-Metal - dasselbe Verzeichnis, aus dem `fetchbridge` liest (`SOURCE_DIR`). Das `.deb`-Postinst legt es mit einer gemeinsamen Gruppe (`media-pipeline`) an, damit beide Systemuser darauf zugreifen können.
-* `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben.
+* `LOG_LEVEL`: `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` (case-insensitive). Standard `INFO`, ein ungültiger Wert fällt sicher darauf zurück. Hat immer Vorrang vor `DEBUG`.
+* `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben - abwärtskompatible Kurzform für `LOG_LEVEL=DEBUG`, nur wirksam falls `LOG_LEVEL` nicht gesetzt ist.
 
 ---
 
