@@ -97,7 +97,10 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
     """
     Konfiguriert das Logging der gesamten Anwendung (Root-Logger):
     - Immer ein stdout-Handler, damit journald/systemd/docker logs die
-      Ausgabe unabhängig von der Betriebsart automatisch erfassen.
+      Ausgabe unabhängig von der Betriebsart automatisch erfassen. Bewusst
+      OHNE eigenen Zeitstempel im Format - journald/docker logs stempeln
+      jede Zeile ohnehin schon selbst, ein zusätzlicher %(asctime)s im
+      Log-Text würde in `journalctl`/`docker logs` nur doppelt auftauchen.
     - Zusätzlich ein Datei-Handler, ausgelöst durch: explizite
       log_file-Konfiguration, ein tatsächlich als Docker-Volume gemountetes
       /log-Verzeichnis (siehe _is_dedicated_mount() - eine reine
@@ -129,13 +132,14 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
     for h in list(root_logger.handlers):
         root_logger.removeHandler(h)
 
-    formatter = logging.Formatter(
+    stdout_formatter = logging.Formatter(fmt="[%(levelname)s] %(message)s")
+    file_formatter = logging.Formatter(
         fmt="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setFormatter(formatter)
+    stdout_handler.setFormatter(stdout_formatter)
     root_logger.addHandler(stdout_handler)
 
     active_handlers_desc = ["stdout"]
@@ -178,7 +182,7 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
                 )
             else:
                 file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
-            file_handler.setFormatter(formatter)
+            file_handler.setFormatter(file_formatter)
             root_logger.addHandler(file_handler)
             active_handlers_desc.append(f"Datei ({log_path})")
             reason = f"{trigger_reason}"
