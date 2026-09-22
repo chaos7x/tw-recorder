@@ -103,6 +103,29 @@ class TestLoadConfig:
 
         assert cfg["sleep_interval"] == 99
 
+    def test_broken_conf_d_file_does_not_block_later_conf_d_files(self, config, tmp_path, monkeypatch):
+        """
+        Regression: config.read() mit der GESAMTEN Dateiliste auf einmal
+        bricht beim ersten Parse-Fehler komplett ab - jede danach folgende
+        Datei (auch gültige!) wurde dadurch stillschweigend nie gelesen.
+        Alphabetisch sortiert landet die kaputte Datei zwischen zwei gültigen.
+        """
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[channels]\nmainchannel = best\n")
+        (conf_d / "10-good.conf").write_text("[channels]\ngoodchannel = 720p\n", encoding="utf-8")
+        (conf_d / "20-broken.conf").write_text("this is not valid ini at all !!! ===\n", encoding="utf-8")
+        (conf_d / "30-more.conf").write_text("[channels]\nmorechannel = worst\n", encoding="utf-8")
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+
+        cfg = config.load_config()
+
+        assert cfg["config_obj"].has_option("channels", "mainchannel")
+        assert cfg["config_obj"].has_option("channels", "goodchannel")
+        assert cfg["config_obj"].has_option("channels", "morechannel")
+
 
 class TestParseStreamers:
     """parse_streamers() lebt in daemon.py, ruft intern aber config.load_config()
