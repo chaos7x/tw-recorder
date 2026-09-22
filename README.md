@@ -129,6 +129,8 @@ pip install --break-system-packages "streamlink>=8.2.0"
 
 Danach steht `tw-recorder --version` systemweit zur Verfügung.
 
+Die Logdatei landet je nach Umgebung automatisch am sinnvollsten Ort (`/var/log/tw-recorder/`, sofern beschreibbar und ein klassischer Syslog-Daemon läuft, sonst nur auf `stdout`/journald) - siehe `LOG_FILE`-Umgebungsvariable, falls ein fester Pfad gewünscht ist. Läuft ein Syslog-Daemon, rotiert die App die Datei bewusst **nicht** selbst (kein `RotatingFileHandler`) - das übernimmt das mitgelieferte `/etc/logrotate.d/tw-recorder` (nur im `.deb`-Paket enthalten; bei einer reinen `pip`-Installation ohne `.deb` selbst einrichten, falls gewünscht). Nur bei explizit gesetztem `LOG_FILE` oder einem gemounteten Docker-`/log`-Volume rotiert die App eigenständig, da dort sonst niemand rotieren würde.
+
 ### Alternative: Fertiges Debian-Paket (.deb)
 
 Jedes [GitHub Release](https://github.com/chaos7x/tw-recorder/releases) enthält zusätzlich ein `tw-recorder_<version>_all.deb` als Anhang - keine manuelle `pip`-Installation nötig, `apt`/`dpkg` löst die Abhängigkeiten (`streamlink`, `ffmpeg`) automatisch mit auf. **Achtung:** Das `streamlink`-Paket aus den Debian/Ubuntu-Repos ist oft älter als die oben geforderte Version 8.2.0 - im Zweifel danach `pip install --break-system-packages --upgrade "streamlink>=8.2.0"` ausführen, um die apt-Version zu überschreiben:

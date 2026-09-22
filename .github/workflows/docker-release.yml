@@ -160,7 +160,7 @@ jobs:
           # Verzeichnisses (wie im Dockerfile) - das ist bei einem .deb der
           # Standard-Suchpfad von Debians System-Python, das Package ist
           # damit ohne zusätzliche Umgebungsvariablen importierbar.
-          mkdir -p pkgroot/usr/bin pkgroot/usr/lib/python3/dist-packages pkgroot/etc/tw-recorder/conf.d pkgroot/usr/lib/systemd/system pkgroot/etc/init.d
+          mkdir -p pkgroot/usr/bin pkgroot/usr/lib/python3/dist-packages pkgroot/etc/tw-recorder/conf.d pkgroot/usr/lib/systemd/system pkgroot/etc/init.d pkgroot/etc/logrotate.d
           cp install/bin/tw-recorder pkgroot/usr/bin/tw-recorder
           chmod 755 pkgroot/usr/bin/tw-recorder
           cp -r install/tw_recorder pkgroot/usr/lib/python3/dist-packages/tw_recorder
@@ -171,6 +171,10 @@ jobs:
           # sysvinit-core) - siehe postinst.sh fuer die Registrierung.
           cp init.d/tw-recorder pkgroot/etc/init.d/tw-recorder
           chmod 755 pkgroot/etc/init.d/tw-recorder
+          # Nur relevant, wenn ein klassischer Syslog-Daemon laeuft (siehe
+          # logging_setup.setup_logging()) - der Datei-Handler rotiert dann
+          # bewusst selbst NICHT mehr, das uebernimmt logrotate.
+          cp logrotate.d/tw-recorder pkgroot/etc/logrotate.d/tw-recorder
 
       - name: .deb bauen
         run: |
@@ -187,6 +191,7 @@ jobs:
             --depends ffmpeg \
             --depends adduser \
             --config-files /etc/tw-recorder/recorder.conf \
+            --config-files /etc/logrotate.d/tw-recorder \
             --after-install postinst.sh \
             --before-remove prerm.sh \
             --after-remove postrm.sh \

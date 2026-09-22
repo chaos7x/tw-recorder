@@ -22,6 +22,13 @@ mkdir -p /srv/media-pipeline/recordings /srv/media-pipeline/incoming
 chown root:media-pipeline /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming
 chmod 2775 /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming
 
+# /var/log gehoert root:root mit 755 - ohne dies koennte der dedizierte
+# tw-recorder-User dort nie einen eigenen Unterordner anlegen, und
+# logging_setup._resolve_log_file_path()s FHS-Fallback (/var/log/tw-recorder/...)
+# wuerde auf jeder frischen Installation stillschweigend nie greifen.
+mkdir -p /var/log/tw-recorder
+chown tw-recorder:tw-recorder /var/log/tw-recorder
+
 # /run/systemd/system existiert nur, wenn systemd tatsaechlich als Init-System
 # laeuft (nicht z.B. in einem Chroot/Container-Build ohne systemd) - ohne
 # diese Absicherung wuerde die Paketinstallation dort fehlschlagen. Auf einem
