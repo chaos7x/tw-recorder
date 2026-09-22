@@ -110,6 +110,23 @@ services:
       - ./recordings:/srv/media-pipeline/recordings:rw
 ```
 
+#### 🔗 Interop mit Bare-Metal/anderen Containern (gemeinsamer Host-Pfad)
+
+`user: "11107:11108"` oben ist nur ein Platzhalter. Willst du denselben Host-Ordner nutzen, den auch eine Bare-Metal-/`.deb`-Installation (oder `fetchbridge` in einem anderen Container) verwendet, mountest du statt `./recordings` direkt den echten Pfad:
+
+```yaml
+volumes:
+  - /srv/media-pipeline/recordings:/srv/media-pipeline/recordings:rw
+```
+
+`/srv/media-pipeline/recordings` gehört dort `root:media-pipeline` mit Modus `2775` (setgid, bewusst **ohne** Sticky-Bit) - Schreib-/Löschrecht hängt also rein an der **Gruppe**, nicht an der UID oder dem Datei-Owner. Die GID im `user:`-Feld muss deshalb mit der echten Host-Gruppe übereinstimmen, sonst gibt's `Permission denied`:
+
+```bash
+getent group media-pipeline   # z.B. media-pipeline:x:998:
+```
+
+Die zweite Zahl in `user: "<uid>:<gid>"` durch diese echte GID ersetzen (z.B. `user: "11107:998"`) - die UID (erste Zahl) ist frei wählbar, da sie für die Zugriffsrechte auf dieses Verzeichnis keine Rolle spielt.
+
 ---
 
 ## 🛠️ Bare-Metal-Installation (ohne Docker)
