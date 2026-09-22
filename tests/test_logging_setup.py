@@ -57,6 +57,38 @@ class FakeCommFile:
         return self._content
 
 
+class TestResolveLogLevel:
+    def test_defaults_to_info(self, logging_setup, monkeypatch):
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        monkeypatch.delenv("DEBUG", raising=False)
+
+        assert logging_setup._resolve_log_level() == logging_setup.logging.INFO
+
+    def test_log_level_env_var_is_used(self, logging_setup, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "warning")
+        monkeypatch.delenv("DEBUG", raising=False)
+
+        assert logging_setup._resolve_log_level() == logging_setup.logging.WARNING
+
+    def test_debug_env_var_is_an_alias_for_log_level_debug(self, logging_setup, monkeypatch):
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        monkeypatch.setenv("DEBUG", "true")
+
+        assert logging_setup._resolve_log_level() == logging_setup.logging.DEBUG
+
+    def test_explicit_log_level_takes_precedence_over_debug(self, logging_setup, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "ERROR")
+        monkeypatch.setenv("DEBUG", "true")
+
+        assert logging_setup._resolve_log_level() == logging_setup.logging.ERROR
+
+    def test_invalid_log_level_falls_back_to_default(self, logging_setup, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "not-a-real-level")
+        monkeypatch.delenv("DEBUG", raising=False)
+
+        assert logging_setup._resolve_log_level() == logging_setup.logging.INFO
+
+
 class TestIsSyslogDaemonRunning:
     def test_returns_false_without_proc_directory(self, logging_setup, monkeypatch):
         monkeypatch.setattr(logging_setup.Path, "is_dir", lambda self: False)
