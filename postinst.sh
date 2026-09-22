@@ -18,9 +18,20 @@ if ! getent group media-pipeline >/dev/null 2>&1; then
 fi
 adduser tw-recorder media-pipeline
 
-mkdir -p /srv/media-pipeline/recordings /srv/media-pipeline/incoming
-chown root:media-pipeline /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming
-chmod 2775 /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming
+# Rechte/Owner NUR beim allerersten Anlegen setzen, nie bei einem Upgrade
+# ueberschreiben - ein Admin, der z.B. chmod 777 auf /srv/media-pipeline/incoming
+# gesetzt hat (etwa fuer einen externen Uploader ausserhalb der media-pipeline-
+# Gruppe), wuerde sonst bei jedem apt upgrade stillschweigend wieder auf 2775
+# zurueckgesetzt. Reihenfolge wichtig: Elternverzeichnis zuerst, sonst wuerde
+# ein spaeteres mkdir -p fuer ein Kindverzeichnis das noch fehlende Eltern-
+# verzeichnis mit falschen (umask-basierten) Rechten anlegen.
+for dir in /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming; do
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+        chown root:media-pipeline "$dir"
+        chmod 2775 "$dir"
+    fi
+done
 
 # /var/log gehoert root:root mit 755 - ohne dies koennte der dedizierte
 # tw-recorder-User dort nie einen eigenen Unterordner anlegen, und
