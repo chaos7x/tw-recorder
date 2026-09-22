@@ -206,7 +206,8 @@ class TestSetupLoggingFileTrigger:
         assert len(root_handlers) == 1
         assert isinstance(root_handlers[0], logging.StreamHandler)
 
-    def test_real_log_volume_mount_adds_file_handler(self, logging_setup, monkeypatch, tmp_path, clean_root_logger):
+    def test_real_log_volume_mount_adds_rotating_file_handler(self, logging_setup, monkeypatch, tmp_path, clean_root_logger):
+        """Docker-Volume: niemand sonst rotiert die Datei -> eigene RotatingFileHandler-Rotation noetig."""
         monkeypatch.setattr(logging_setup, "_is_dedicated_mount", lambda p: True)
         monkeypatch.setattr(logging_setup, "_is_syslog_daemon_running", lambda: False)
         monkeypatch.setattr(
@@ -217,4 +218,28 @@ class TestSetupLoggingFileTrigger:
 
         logging_setup.setup_logging(cfg={})
 
-        assert len(logging.getLogger().handlers) == 2
+        handlers = logging.getLogger().handlers
+        assert len(handlers) == 2
+        assert isinstance(handlers[1], logging_setup.logging.handlers.RotatingFileHandler)
+
+    def test_syslog_daemon_detected_adds_plain_file_handler_without_own_rotation(self, logging_setup, monkeypatch, tmp_path, clean_root_logger):
+        """
+        Ein laufender Syslog-Daemon impliziert praktisch immer auch logrotate
+        (siehe logrotate.d/tw-recorder) - die App soll dort NICHT zusaetzlich
+        selbst per RotatingFileHandler rotieren, sonst kommen sich beide
+        Mechanismen in die Quere.
+        """
+        monkeypatch.setattr(logging_setup, "_is_dedicated_mount", lambda p: False)
+        monkeypatch.setattr(logging_setup, "_is_syslog_daemon_running", lambda: True)
+        monkeypatch.setattr(
+            logging_setup, "_resolve_log_file_path",
+            lambda app_name, explicit_path: tmp_path / "test.log"
+        )
+        monkeypatch.delenv("LOG_FILE", raising=False)
+
+        logging_setup.setup_logging(cfg={})
+
+        handlers = logging.getLogger().handlers
+        assert len(handlers) == 2
+        assert isinstance(handlers[1], logging.FileHandler)
+        assert not isinstance(handlers[1], logging_setup.logging.handlers.RotatingFileHandler)

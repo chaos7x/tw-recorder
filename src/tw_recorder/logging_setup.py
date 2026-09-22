@@ -98,14 +98,21 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
     Konfiguriert das Logging der gesamten Anwendung (Root-Logger):
     - Immer ein stdout-Handler, damit journald/systemd/docker logs die
       Ausgabe unabhängig von der Betriebsart automatisch erfassen.
-    - Zusätzlich ein rotierender Datei-Handler (max. 10 MB, 5 Backups),
-      ausgelöst durch: explizite log_file-Konfiguration, ein tatsächlich als
-      Docker-Volume gemountetes /log-Verzeichnis (siehe _is_dedicated_mount()
-      - eine reine is_dir()-Prüfung reicht nicht, da das Dockerfile /log auch
-      ganz ohne Mount fest ins Image anlegt), oder einen tatsächlich
-      laufenden klassischen Syslog-Daemon. Ohne einen dieser Gründe läuft
-      die Ausgabe ohnehin bereits über journald (stdout-Erfassung) - eine
-      eigene Logdatei wäre dann nur doppelte Datenhaltung ohne Mehrwert.
+    - Zusätzlich ein Datei-Handler, ausgelöst durch: explizite
+      log_file-Konfiguration, ein tatsächlich als Docker-Volume gemountetes
+      /log-Verzeichnis (siehe _is_dedicated_mount() - eine reine
+      is_dir()-Prüfung reicht nicht, da das Dockerfile /log auch ganz ohne
+      Mount fest ins Image anlegt), oder einen tatsächlich laufenden
+      klassischen Syslog-Daemon. Ohne einen dieser Gründe läuft die Ausgabe
+      ohnehin bereits über journald (stdout-Erfassung) - eine eigene
+      Logdatei wäre dann nur doppelte Datenhaltung ohne Mehrwert.
+      Nur bei (a)/(b) rotiert die App selbst (RotatingFileHandler, max. 10 MB,
+      5 Backups) - dort rotiert sonst niemand. Bei (c) (Syslog-Daemon erkannt)
+      dagegen ein einfacher FileHandler ohne eigene Rotation: ein System mit
+      laufendem Syslog-Daemon hat so gut wie immer auch logrotate zur Hand
+      (Standard-Debian-Konvention, siehe mitgeliefertes
+      /etc/logrotate.d/tw-recorder) - zwei unabhängige Rotationsmechanismen
+      auf derselben Datei würden sich nur gegenseitig ins Gehege kommen.
     - Log-Level per ENV-Variable DEBUG steuerbar (true/yes/1, case-insensitive).
     - HTTP-Bibliotheks-Logger werden unabhängig vom eigenen Level auf
       WARNING gedrosselt, damit Connection-Pool-Rauschen nicht das
@@ -161,12 +168,16 @@ def setup_logging(cfg: dict | None = None, app_name: str = APP_NAME) -> logging.
 
     if trigger_reason is not None:
         log_path = _resolve_log_file_path(app_name, explicit_path)
+        self_rotate = trigger_reason != "Syslog-Daemon erkannt"
 
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.handlers.RotatingFileHandler(
-                str(log_path), maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-            )
+            if self_rotate:
+                file_handler = logging.handlers.RotatingFileHandler(
+                    str(log_path), maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+                )
+            else:
+                file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
             active_handlers_desc.append(f"Datei ({log_path})")
