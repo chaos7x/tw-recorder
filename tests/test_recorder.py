@@ -160,6 +160,37 @@ class TestWriteXattrs:
         assert call_count == 1
 
 
+class TestBuildOutPattern:
+    """
+    Regression: out_pattern nutzte bislang Streamlinks eigenen {author}-
+    Platzhalter für den Kanalnamen im Dateinamen, obwohl der Kanal bereits
+    aus der URL bekannt ist (record_loop()). {author} muss Streamlink erst
+    live aus den Twitch-Metadaten auflösen - direkt nach Stream-Start können
+    die noch nicht verfügbar sein, wodurch {author} leer blieb (real
+    beobachtet: "2026-09-23_20-00__[]_.ts"). Der Kanalname wird jetzt direkt
+    eingesetzt statt über einen unzuverlässigen Streamlink-Platzhalter.
+    """
+
+    def test_channel_name_is_inserted_directly_not_via_author_placeholder(self, recorder, tmp_path):
+        out_pattern = recorder._build_out_pattern(tmp_path, "somechannel")
+
+        assert "{author}" not in out_pattern
+        assert "_somechannel_" in out_pattern
+
+    def test_category_and_title_placeholders_remain_streamlink_templates(self, recorder, tmp_path):
+        """Kategorie/Titel sind lokal nicht bekannt - bleiben bewusst Streamlink-Platzhalter."""
+        out_pattern = recorder._build_out_pattern(tmp_path, "somechannel")
+
+        assert "[{category}]" in out_pattern
+        assert "{title}" in out_pattern
+        assert "{time:%Y-%m-%d_%H-%M}" in out_pattern
+
+    def test_channel_name_containing_underscore_is_preserved(self, recorder, tmp_path):
+        out_pattern = recorder._build_out_pattern(tmp_path, "some_channel")
+
+        assert "_some_channel_" in out_pattern
+
+
 class TestEnsureChannelDir:
     """
     Regression: out_dir.mkdir(parents=True, exist_ok=True) ohne explizites
