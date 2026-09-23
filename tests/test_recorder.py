@@ -1,5 +1,6 @@
 """
-Tests für _parse_recorded_filename() und _write_xattrs() (recorder.py).
+Tests für _parse_recorded_filename(), _write_xattrs() und
+_ensure_channel_dir() (recorder.py).
 
 Der alte naive "_"-Split zwischen Kategorie und Titel (cat_title_parts =
 rest_after_channel.split("_", 1)) hat mehrteilige Kategorienamen falsch
@@ -10,6 +11,8 @@ fälschlich im Titel. Die Kategorie wird jetzt in eckigen Klammern kodiert
 """
 
 import os
+import stat
+from pathlib import Path
 
 import pytest
 
@@ -134,3 +137,50 @@ class TestWriteXattrs:
         recorder._write_xattrs(target, {"a": "1", "b": "2", "c": "3"})
 
         assert call_count == 1
+
+
+class TestEnsureChannelDir:
+    """
+    Regression: out_dir.mkdir(parents=True, exist_ok=True) ohne explizites
+    mode= verliert das Gruppen-Schreibrecht durchs Prozess-Umask (Standard-
+    Mode 0o777 wird umask-maskiert, z.B. auf 0o755 bei umask 022) - das
+    Setgid-Bit selbst wird zwar vom Elternverzeichnis geerbt, das fuer die
+    media-pipeline-Gruppe eigentlich noetige g+w aber nicht. Real auf einem
+    Host reproduziert: alle von tw-recorder angelegten Kanal-Unterordner
+    unter /srv/media-pipeline/recordings/ standen auf 2755 statt 2775,
+    wodurch fetchbridge (Gruppenmitglied, aber nicht Owner) dort keine
+    Dateien mehr verschieben/loeschen konnte.
+    """
+
+    def test_newly_created_dir_gets_2775_regardless_of_umask(self, recorder, tmp_path):
+        old_umask = os.umask(0o022)
+        try:
+            out_dir = tmp_path / "somechannel"
+            recorder._ensure_channel_dir(out_dir)
+            assert stat.S_IMODE(out_dir.stat().st_mode) == 0o2775
+        finally:
+            os.umask(old_umask)
+
+    def test_existing_dir_permissions_are_not_overwritten(self, recorder, tmp_path):
+        """Eine bewusste Admin-Anpassung (z.B. chmod 777) darf nicht bei jedem Recording-Start zurueckgesetzt werden."""
+        out_dir = tmp_path / "somechannel"
+        out_dir.mkdir()
+        out_dir.chmod(0o777)
+
+        recorder._ensure_channel_dir(out_dir)
+
+        assert stat.S_IMODE(out_dir.stat().st_mode) == 0o777
+
+    def test_chmod_failure_logs_warning_without_raising(self, recorder, tmp_path, monkeypatch, caplog):
+        out_dir = tmp_path / "somechannel"
+
+        def raise_oserror(self, mode):
+            raise OSError("Operation not permitted")
+
+        monkeypatch.setattr(Path, "chmod", raise_oserror)
+
+        with caplog.at_level("WARNING"):
+            recorder._ensure_channel_dir(out_dir)  # darf nicht raisen
+
+        assert out_dir.is_dir()
+        assert "2775" in caplog.text
