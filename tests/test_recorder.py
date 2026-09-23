@@ -81,6 +81,27 @@ class TestParseRecordedFilename:
         assert category  # kein Crash, irgendein Fallback-Wert
         assert title
 
+    def test_empty_author_from_streamlink_falls_back_cleanly(self, recorder):
+        """
+        Regression: real auf einem Host beobachtet. Streamlinks {author}-
+        Platzhalter im Dateinamen kann leer bleiben, wenn die Twitch-
+        Metadaten beim Aufnahmestart noch nicht verfügbar waren (Stream
+        gerade erst live) - der Dateiname beginnt dann gar nicht mit dem
+        Kanalnamen. Vorher landete "[]_" als Datenmüll im Titel, statt
+        sauber auf "Untitled" zurückzufallen.
+        """
+        full_stem = "2026-09-23_20-00__[]_"
+
+        date_str, time_str, channel, category, title = recorder._parse_recorded_filename(
+            full_stem, "somechannel"
+        )
+
+        assert date_str == "2026-09-23"
+        assert time_str == "20-00"
+        assert channel == "somechannel"
+        assert category == "NoCategory"
+        assert title == "Untitled"
+
 
 class TestWriteXattrs:
     """
