@@ -119,6 +119,32 @@ def _write_xattrs(path, attrs: dict[str, str]) -> None:
             return
 
 
+def _ensure_channel_dir(out_dir) -> None:
+    """
+    Legt das Kanal-Unterverzeichnis unter STORAGE_DIR an und erzwingt beim
+    tatsächlichen Neuanlegen explizit 2775 statt sich auf mkdir()s
+    Standard-Mode zu verlassen: mkdir() allein würde das Gruppen-Schreibrecht
+    durch das Prozess-Umask verlieren (Standard-Mode 0o777 wird umask-
+    maskiert, z.B. auf 0o755 bei umask 022) - das Setgid-Bit selbst wird zwar
+    vom Elternverzeichnis geerbt, das für die media-pipeline-Gruppe eigentlich
+    nötige g+w aber nicht. Ohne das könnte fetchbridge (Mitglied der
+    media-pipeline-Gruppe, aber nicht Owner) Dateien in diesem
+    Kanal-Unterordner nicht mehr verschieben/löschen - exakt das Szenario,
+    für das die 2775-Rechte auf /srv/media-pipeline überhaupt eingeführt
+    wurden.
+    Nur beim tatsächlichen Neuanlegen gesetzt, sonst würde eine bewusste
+    Admin-Anpassung bei jedem Recording-Start wieder überschrieben (derselbe
+    Fix wie in postinst.sh für /srv/media-pipeline selbst).
+    """
+    newly_created = not out_dir.is_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if newly_created:
+        try:
+            out_dir.chmod(0o2775)
+        except OSError as e:
+            logger.warning(f"Konnte Rechte von {out_dir} nicht auf 2775 setzen: {e}")
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
@@ -141,7 +167,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
         pattern_tmpl = cfg["filename_pattern"]
 
         out_dir = storage_dir / channel
-        out_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_channel_dir(out_dir)
 
         lock_file = out_dir / ".record.lock"
 
