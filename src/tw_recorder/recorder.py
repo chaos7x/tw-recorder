@@ -67,24 +67,31 @@ def _parse_recorded_filename(full_stem: str, channel: str) -> tuple[str, str, st
     # dürfen "_" enthalten, was das alte Split-Verfahren fälschlich abschnitt).
     parsed_channel = channel
     channel_prefix = f"{channel}_"
-    if remainder.startswith(channel_prefix):
-        rest_after_channel = remainder[len(channel_prefix):]
-    else:
-        # Unerwartetes Format (z.B. Streamlink hat den Namen anders
-        # geschrieben) -> best effort wie zuvor
-        rest_after_channel = remainder
 
     # Kategorie steht in eckigen Klammern (siehe out_pattern) - dadurch
     # bleibt die Trennung zum Titel eindeutig, selbst wenn die Kategorie
-    # selbst einen "_" enthält (z.B. durch Leerzeichen-Ersetzung). Fallback
-    # auf den alten naiven "_"-Split für .ts-Dateien, die noch mit dem alten
-    # Pattern (vor diesem Fix) benannt wurden und zufällig noch in out_dir
-    # herumliegen.
-    bracket_match = re.match(r'^\[(.*?)\]_?(.*)$', rest_after_channel)
+    # selbst einen "_" enthält (z.B. durch Leerzeichen-Ersetzung). Bewusst
+    # re.search() auf dem GESAMTEN remainder statt re.match() auf dem um
+    # den Kanal-Präfix gekürzten Rest: Streamlinks {author}-Platzhalter im
+    # Dateinamen kann leer bleiben, wenn die Twitch-Metadaten beim
+    # Aufnahmestart noch nicht verfügbar waren (z.B. Stream gerade erst
+    # live) - der Dateiname beginnt dann gar nicht erst mit dem Kanalnamen
+    # (z.B. "2026-09-23_20-00__[]_.ts"). Ein vorheriges Prefix-Matching
+    # würde die Klammer dann nie finden und in den naiven Fallback fallen,
+    # der die Klammer-Zeichen selbst fälschlich als Teil des Titels
+    # behandelt, statt sauber auf "Untitled" zurückzufallen.
+    bracket_match = re.search(r'\[(.*?)\]_?(.*)$', remainder)
     if bracket_match:
         raw_category = bracket_match.group(1)
         raw_title = bracket_match.group(2).strip()
     else:
+        # Altes Format ohne Klammern (Dateien von vor diesem Fix, die
+        # zufällig noch in out_dir herumliegen) - bestmöglicher naiver
+        # Fallback per Unterstrich-Split.
+        if remainder.startswith(channel_prefix):
+            rest_after_channel = remainder[len(channel_prefix):]
+        else:
+            rest_after_channel = remainder
         cat_title_parts = rest_after_channel.split("_", 1)
         raw_category = cat_title_parts[0] if len(cat_title_parts) > 0 else ""
         raw_title = cat_title_parts[1].strip() if len(cat_title_parts) > 1 else ""
