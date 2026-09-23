@@ -72,14 +72,15 @@ def _parse_recorded_filename(full_stem: str, channel: str) -> tuple[str, str, st
     # bleibt die Trennung zum Titel eindeutig, selbst wenn die Kategorie
     # selbst einen "_" enthält (z.B. durch Leerzeichen-Ersetzung). Bewusst
     # re.search() auf dem GESAMTEN remainder statt re.match() auf dem um
-    # den Kanal-Präfix gekürzten Rest: Streamlinks {author}-Platzhalter im
-    # Dateinamen kann leer bleiben, wenn die Twitch-Metadaten beim
-    # Aufnahmestart noch nicht verfügbar waren (z.B. Stream gerade erst
-    # live) - der Dateiname beginnt dann gar nicht erst mit dem Kanalnamen
-    # (z.B. "2026-09-23_20-00__[]_.ts"). Ein vorheriges Prefix-Matching
-    # würde die Klammer dann nie finden und in den naiven Fallback fallen,
-    # der die Klammer-Zeichen selbst fälschlich als Teil des Titels
-    # behandelt, statt sauber auf "Untitled" zurückzufallen.
+    # den Kanal-Präfix gekürzten Rest: out_pattern setzt den Kanalnamen seit
+    # dem {author}-Fix zwar direkt (nicht mehr über Streamlinks eigenen,
+    # von Twitch-Metadaten abhängigen {author}-Platzhalter) ein, ältere,
+    # bereits vor diesem Fix geschriebene .ts-Dateien können aber noch mit
+    # leerem Kanal-Präfix in out_dir herumliegen (z.B.
+    # "2026-09-23_20-00__[]_.ts") - ein Prefix-Matching würde die Klammer
+    # dort nie finden und in den naiven Fallback fallen, der die
+    # Klammer-Zeichen selbst fälschlich als Teil des Titels behandelt,
+    # statt sauber auf "Untitled" zurückzufallen.
     bracket_match = re.search(r'\[(.*?)\]_?(.*)$', remainder)
     if bracket_match:
         raw_category = bracket_match.group(1)
@@ -152,6 +153,22 @@ def _ensure_channel_dir(out_dir) -> None:
             logger.warning(f"Konnte Rechte von {out_dir} nicht auf 2775 setzen: {e}")
 
 
+def _build_out_pattern(out_dir, channel: str) -> str:
+    """
+    Baut das Streamlink-Ausgabepattern für die rohe .ts-Aufnahme. Kanalname
+    wird direkt eingesetzt statt Streamlinks eigenen {author}-Platzhalter zu
+    nutzen: der Kanal ist bereits aus der URL bekannt (record_loop()), ein
+    {author}-Platzhalter müsste Streamlink dagegen erst live aus den
+    Twitch-Metadaten auflösen - die können direkt nach Stream-Start noch
+    nicht verfügbar sein und {author} bleibt dann leer (real beobachtet:
+    "2026-09-23_20-00__[]_.ts", siehe _parse_recorded_filename()).
+    Category/Titel bleiben bewusst Streamlink-Platzhalter (in eckigen
+    Klammern um die Kategorie, siehe _parse_recorded_filename()), da diese
+    Werte lokal nicht bekannt sind.
+    """
+    return str(out_dir / f"{{time:%Y-%m-%d_%H-%M}}_{channel}_[{{category}}]_{{title}}.ts")
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
@@ -178,13 +195,7 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
 
         lock_file = out_dir / ".record.lock"
 
-        # Streamlink nimmt rohen Transport-Stream auf (.ts). Kategorie in
-        # eckige Klammern gefasst, damit sie beim Remuxen wieder eindeutig
-        # vom Titel abgetrennt werden kann (siehe Parsing weiter unten) -
-        # ein reiner "_"-Separator wäre mehrdeutig, sobald der Kategoriename
-        # selbst ein "_" enthält (z.B. durch Leerzeichen-Ersetzung mancher
-        # Streamlink-Versionen/-Plugins).
-        out_pattern = str(out_dir / "{time:%Y-%m-%d_%H-%M}_{author}_[{category}]_{title}.ts")
+        out_pattern = _build_out_pattern(out_dir, channel)
 
         if check_stream_online(url, cfg):
             lock_fd = None
