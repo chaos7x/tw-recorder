@@ -57,12 +57,20 @@ volumes:
       o: bind
       device: ./log
 
+  # Zeigt bewusst in den gemeinsamen /opt/docker/media-pipeline-Baum statt in
+  # ein rein eigenes ./recordings - fetchbridge und yt-upload binden denselben
+  # Host-Pfad ein (siehe deren jeweilige docker-compose.yaml.example), damit
+  # fetchbridge zwischen recordings/ und incoming/ atomar per os.rename()
+  # verschieben kann: getrennte Bind-Mounts scheitern dabei mit EXDEV, selbst
+  # wenn die Host-Verzeichnisse zufällig auf derselben Partition liegen (der
+  # Kernel prüft bei rename() auf dieselbe Mount-Instanz, nicht nur auf
+  # denselben st_dev).
   storage-all:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ./recordings
+      device: /opt/docker/media-pipeline/recordings
 
   # --- Vorbereitung für spätere NFS-Mounts ---
   # storage-all:
@@ -70,4 +78,4 @@ volumes:
   #   driver_opts:
   #     type: nfs
   #     o: addr=192.168.1.100,rw,nolock,hard,nfsvers=4
-  #     device: ":/volume1/recordings"
+  #     device: ":/volume1/media-pipeline/recordings"

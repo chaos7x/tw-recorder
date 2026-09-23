@@ -107,12 +107,19 @@ services:
       - .env
     volumes:
       - ./config:/etc/tw-recorder:ro
-      - ./recordings:/srv/media-pipeline/recordings:rw
+      # Zeigt in den gemeinsamen /opt/docker/media-pipeline-Baum statt in ein
+      # rein eigenes ./recordings: fetchbridge braucht recordings/ UND
+      # incoming/ als EINEN gemeinsamen Mount (statt zwei getrennte), sonst
+      # scheitert dessen os.rename() zwischen beiden mit EXDEV - selbst wenn
+      # die Host-Verzeichnisse zufällig auf derselben Partition liegen
+      # (siehe fetchbridges docker-compose.yaml.example). Läuft fetchbridge
+      # nicht mit, tut's auch ein rein lokales ./recordings.
+      - /opt/docker/media-pipeline/recordings:/srv/media-pipeline/recordings:rw
 ```
 
 #### 🔗 Interop mit Bare-Metal/anderen Containern (gemeinsamer Host-Pfad)
 
-`user: "11107:11108"` oben ist nur ein Platzhalter. Willst du denselben Host-Ordner nutzen, den auch eine Bare-Metal-/`.deb`-Installation (oder `fetchbridge` in einem anderen Container) verwendet, mountest du statt `./recordings` direkt den echten Pfad:
+`user: "11107:11108"` oben ist nur ein Platzhalter. Läuft `fetchbridge`/`yt-upload` (oder beide) als Bare-Metal-/`.deb`-Installation statt als Container, mountest du hier stattdessen direkt den echten Host-Pfad:
 
 ```yaml
 volumes:
