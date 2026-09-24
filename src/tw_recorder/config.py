@@ -46,33 +46,37 @@ HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "t
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
 
 
-def _load_credentials_directory_env(credential_name: str = "twitch-secrets") -> dict:
+def _load_twitch_credentials_file() -> dict:
     """
-    Liest optional eine per systemd LoadCredentialEncrypted= entschlüsselte
-    KEY=VALUE-Datei direkt aus $CREDENTIALS_DIRECTORY (siehe README,
-    "Twitch-Credentials mit systemd-creds verschlüsseln") ein.
+    Liest optional eine KEY=VALUE-Datei mit Twitch-Credentials aus dem in
+    TWITCH_CREDENTIALS_FILE angegebenen Pfad - analog zu yt-uploads
+    CREDENTIALS_FILE: ein einzelner, frei konfigurierbarer Pfad statt einer
+    $CREDENTIALS_DIRECTORY-spezifischen Sonderlogik. tw-recorder weiß dabei
+    nichts von systemd-Credentials - es liest einfach "die Datei, deren Pfad
+    in TWITCH_CREDENTIALS_FILE steht", ob das nun ein gewöhnlicher Pfad ist
+    oder (via systemd Environment=TWITCH_CREDENTIALS_FILE=%d/twitch-secrets,
+    siehe README) eine von LoadCredentialEncrypted= entschlüsselte Kopie in
+    $CREDENTIALS_DIRECTORY.
 
-    Bewusst NICHT über EnvironmentFile=%d/... gelöst: das hat sich real als
-    unzuverlässig erwiesen (der %d-Specifier wurde dort nicht wie erwartet
-    aufgelöst, Symptom war "Failed to load environment files"/eine
-    Restart-Crashloop des gesamten Diensts). Direktes Einlesen der Datei
-    entspricht stattdessen dem von systemd selbst empfohlenen Zugriffsmuster
-    (siehe systemd/systemd docs/CREDENTIALS.md: Anwendungscode liest
-    $CREDENTIALS_DIRECTORY/<name> selbst) und vermeidet zusätzlich den Umweg
-    über echte Prozess-Umgebungsvariablen, die über /proc/<pid>/environ für
-    andere hinreichend privilegierte Prozesse einsehbar wären.
+    Bewusst Environment= (ein einzelner Wert) statt EnvironmentFile=%d/...
+    (eine ganze, bulk-eingelesene Datei) im dazugehörigen systemd-Override:
+    Letzteres hat sich real als unzuverlässig erwiesen (der %d-Specifier
+    wurde dort nicht wie erwartet aufgelöst, Symptom war "Failed to load
+    environment files"/eine Restart-Crashloop des gesamten Diensts).
+    Environment=NAME=%d/... funktioniert dagegen zuverlässig - genau das
+    Muster, das yt-uploads CREDENTIALS_FILE bereits nutzt.
 
-    Gibt bei fehlendem $CREDENTIALS_DIRECTORY oder fehlender/nicht lesbarer
+    Gibt bei fehlendem TWITCH_CREDENTIALS_FILE oder fehlender/nicht lesbarer
     Datei ein leeres dict zurück - kein Fehlerfall, das Feature ist rein
     optional und muss bare-metal-Installationen ohne systemd-creds nicht
     betreffen.
     """
-    credentials_dir = os.environ.get("CREDENTIALS_DIRECTORY")
-    if not credentials_dir:
+    cred_path = os.environ.get("TWITCH_CREDENTIALS_FILE")
+    if not cred_path:
         return {}
 
     try:
-        lines = (Path(credentials_dir) / credential_name).read_text(encoding="utf-8").splitlines()
+        lines = Path(cred_path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return {}
 
@@ -163,10 +167,9 @@ def load_config():
     filename_pattern = config.get("general", "filename_pattern", fallback=os.getenv("OUTPUT_FILENAME_PATTERN", "{time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv"))
     log_file = config.get("general", "log_file", fallback=os.getenv("LOG_FILE", "")).strip()
 
-    # Twitch Credentials - Fallback-Reihenfolge: Config-Datei -> systemd-creds
-    # ($CREDENTIALS_DIRECTORY/twitch-secrets, siehe _load_credentials_directory_env())
-    # -> Env-Var direkt.
-    credential_env = _load_credentials_directory_env()
+    # Twitch Credentials - Fallback-Reihenfolge: Config-Datei -> TWITCH_CREDENTIALS_FILE
+    # (siehe _load_twitch_credentials_file()) -> Env-Var direkt.
+    credential_env = _load_twitch_credentials_file()
     client_id = config.get(
         "twitch", "client_id",
         fallback=credential_env.get("CLIENT_ID") or os.getenv("CLIENT_ID", os.getenv("TWITCH_CLIENT_ID", ""))

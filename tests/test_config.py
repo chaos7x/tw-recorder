@@ -163,22 +163,26 @@ class TestLoadConfig:
         assert "secret.conf" in caplog.text
 
 
-class TestLoadCredentialsDirectoryEnv:
+class TestLoadTwitchCredentialsFile:
     """
-    Regression: EnvironmentFile=%d/twitch-secrets (der zunächst dokumentierte
-    Ansatz für systemd-creds) hat sich real als unzuverlässig erwiesen - der
+    Analog zu yt-uploads CREDENTIALS_FILE: ein einzelner, frei konfigurierbarer
+    Pfad (TWITCH_CREDENTIALS_FILE) statt einer $CREDENTIALS_DIRECTORY-
+    spezifischen Sonderlogik. Regression, die zu diesem Design führte:
+    EnvironmentFile=%d/twitch-secrets (der zunächst dokumentierte Ansatz für
+    systemd-creds) hat sich real als unzuverlässig erwiesen - der
     %d-Specifier wurde nicht wie erwartet aufgelöst, der Dienst geriet in eine
-    Restart-Crashloop ("Failed to load environment files"). Liest die Datei
-    stattdessen direkt aus $CREDENTIALS_DIRECTORY selbst.
+    Restart-Crashloop ("Failed to load environment files"). Environment=
+    TWITCH_CREDENTIALS_FILE=%d/twitch-secrets (ein einzelner Wert statt einer
+    bulk-eingelesenen Datei) funktioniert dagegen zuverlässig.
     """
 
-    def test_empty_dict_if_credentials_directory_not_set(self, config, monkeypatch):
-        monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
-        assert config._load_credentials_directory_env() == {}
+    def test_empty_dict_if_env_var_not_set(self, config, monkeypatch):
+        monkeypatch.delenv("TWITCH_CREDENTIALS_FILE", raising=False)
+        assert config._load_twitch_credentials_file() == {}
 
-    def test_empty_dict_if_credential_file_missing(self, config, monkeypatch, tmp_path):
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
-        assert config._load_credentials_directory_env() == {}
+    def test_empty_dict_if_file_missing(self, config, monkeypatch, tmp_path):
+        monkeypatch.setenv("TWITCH_CREDENTIALS_FILE", str(tmp_path / "nope"))
+        assert config._load_twitch_credentials_file() == {}
 
     def test_parses_key_value_pairs_with_quotes_stripped(self, config, monkeypatch, tmp_path):
         cred_file = tmp_path / "twitch-secrets"
@@ -186,9 +190,9 @@ class TestLoadCredentialsDirectoryEnv:
             'CLIENT_ID="my_client_id"\nCLIENT_SECRET="my_secret"\nTWITCH_USER_TOKEN=my_token\n',
             encoding="utf-8"
         )
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+        monkeypatch.setenv("TWITCH_CREDENTIALS_FILE", str(cred_file))
 
-        result = config._load_credentials_directory_env()
+        result = config._load_twitch_credentials_file()
 
         assert result == {
             "CLIENT_ID": "my_client_id",
@@ -199,36 +203,29 @@ class TestLoadCredentialsDirectoryEnv:
     def test_ignores_blank_lines_and_comments(self, config, monkeypatch, tmp_path):
         cred_file = tmp_path / "twitch-secrets"
         cred_file.write_text("\n# comment\nCLIENT_SECRET=abc\n\n", encoding="utf-8")
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+        monkeypatch.setenv("TWITCH_CREDENTIALS_FILE", str(cred_file))
 
-        assert config._load_credentials_directory_env() == {"CLIENT_SECRET": "abc"}
-
-    def test_custom_credential_name(self, config, monkeypatch, tmp_path):
-        (tmp_path / "other-name").write_text("CLIENT_SECRET=abc\n", encoding="utf-8")
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
-
-        assert config._load_credentials_directory_env("other-name") == {"CLIENT_SECRET": "abc"}
+        assert config._load_twitch_credentials_file() == {"CLIENT_SECRET": "abc"}
 
 
 class TestLoadConfigTwitchCredentials:
-    def test_credentials_directory_used_when_config_file_lacks_option(self, config, tmp_path, monkeypatch):
+    def test_credentials_file_used_when_config_file_lacks_option(self, config, tmp_path, monkeypatch):
         conf_d = tmp_path / "conf.d"
         conf_d.mkdir()
         main_conf = _write_main_config(tmp_path, "[general]\nstorage_dir = /storage\n")
         monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
         monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
 
-        creds_dir = tmp_path / "creds"
-        creds_dir.mkdir()
-        (creds_dir / "twitch-secrets").write_text("CLIENT_SECRET=from_systemd\n", encoding="utf-8")
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds_dir))
+        cred_file = tmp_path / "twitch-secrets"
+        cred_file.write_text("CLIENT_SECRET=from_systemd\n", encoding="utf-8")
+        monkeypatch.setenv("TWITCH_CREDENTIALS_FILE", str(cred_file))
         monkeypatch.delenv("CLIENT_SECRET", raising=False)
 
         cfg = config.load_config()
 
         assert cfg["client_secret"] == "from_systemd"
 
-    def test_config_file_still_wins_over_credentials_directory(self, config, tmp_path, monkeypatch):
+    def test_config_file_still_wins_over_credentials_file(self, config, tmp_path, monkeypatch):
         """Deckt sich mit dem in der README dokumentierten Fallback-Verhalten von config.get(fallback=)."""
         conf_d = tmp_path / "conf.d"
         conf_d.mkdir()
@@ -236,10 +233,9 @@ class TestLoadConfigTwitchCredentials:
         monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
         monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
 
-        creds_dir = tmp_path / "creds"
-        creds_dir.mkdir()
-        (creds_dir / "twitch-secrets").write_text("CLIENT_SECRET=from_systemd\n", encoding="utf-8")
-        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds_dir))
+        cred_file = tmp_path / "twitch-secrets"
+        cred_file.write_text("CLIENT_SECRET=from_systemd\n", encoding="utf-8")
+        monkeypatch.setenv("TWITCH_CREDENTIALS_FILE", str(cred_file))
 
         cfg = config.load_config()
 
