@@ -181,10 +181,14 @@ service tw-recorder start
 `client_secret`/`user_token` landen sonst im Klartext in `recorder.conf`/`conf.d/*.conf` - `check_secrets_permissions()` warnt zwar, wenn die Datei zusätzlich für Gruppe/Andere lesbar ist, verhindert aber nicht, dass die Secrets überhaupt im Klartext auf der Platte liegen. Mit `LoadCredentialEncrypted=` (systemd >= 250) lässt sich das vermeiden. Anders als bei yt-upload gibt es hier aber keine eigene Credentials-Datei, die `tw-recorder` selbst ausliest - `client_id`/`client_secret`/`user_token` kommen stattdessen über die bereits vorhandenen Env-Var-Fallbacks (`CLIENT_ID`/`CLIENT_SECRET`/`TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET`/`TWITCH_USER_TOKEN`, siehe `config.py`), injiziert über systemds `EnvironmentFile=`, das eine Datei im `KEY=VALUE`-Format direkt als Environment einliest:
 
 ```bash
-# 1. Klartext-Secrets als KEY=VALUE-Datei anlegen (einmalig, als root)
+# 1. Klartext-Secrets als KEY=VALUE-Datei anlegen (einmalig, als root) -
+#    CLIENT_ID ist bei Twitch kein echtes Geheimnis (vergleichbar mit einer
+#    öffentlichen OAuth-Client-ID), lässt sich aber genauso gut mit ins
+#    verschlüsselte Bundle packen
 cat > /etc/tw-recorder/twitch-secrets << 'EOF'
-CLIENT_SECRET=dein_client_secret
-TWITCH_USER_TOKEN=dein_user_token
+CLIENT_ID="deine_client_id"
+CLIENT_SECRET="dein_client_secret"
+TWITCH_USER_TOKEN="dein_user_token"
 EOF
 
 # 2. Verschlüsseln (--with-key=tpm2 bindet die .cred-Datei zusätzlich an dieses
