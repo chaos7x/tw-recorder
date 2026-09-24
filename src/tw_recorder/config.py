@@ -46,6 +46,46 @@ HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "t
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
 
 
+def _load_credentials_directory_env(credential_name: str = "twitch-secrets") -> dict:
+    """
+    Liest optional eine per systemd LoadCredentialEncrypted= entschlüsselte
+    KEY=VALUE-Datei direkt aus $CREDENTIALS_DIRECTORY (siehe README,
+    "Twitch-Credentials mit systemd-creds verschlüsseln") ein.
+
+    Bewusst NICHT über EnvironmentFile=%d/... gelöst: das hat sich real als
+    unzuverlässig erwiesen (der %d-Specifier wurde dort nicht wie erwartet
+    aufgelöst, Symptom war "Failed to load environment files"/eine
+    Restart-Crashloop des gesamten Diensts). Direktes Einlesen der Datei
+    entspricht stattdessen dem von systemd selbst empfohlenen Zugriffsmuster
+    (siehe systemd/systemd docs/CREDENTIALS.md: Anwendungscode liest
+    $CREDENTIALS_DIRECTORY/<name> selbst) und vermeidet zusätzlich den Umweg
+    über echte Prozess-Umgebungsvariablen, die über /proc/<pid>/environ für
+    andere hinreichend privilegierte Prozesse einsehbar wären.
+
+    Gibt bei fehlendem $CREDENTIALS_DIRECTORY oder fehlender/nicht lesbarer
+    Datei ein leeres dict zurück - kein Fehlerfall, das Feature ist rein
+    optional und muss bare-metal-Installationen ohne systemd-creds nicht
+    betreffen.
+    """
+    credentials_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not credentials_dir:
+        return {}
+
+    try:
+        lines = (Path(credentials_dir) / credential_name).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+
+    result = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip('"').strip("'")
+    return result
+
+
 def get_config_files_state() -> dict:
     """Erstellt ein Mapping von Dateipfad zu MD5-Hash für die Haupt-Config und conf.d."""
     files_state = {}
@@ -123,10 +163,22 @@ def load_config():
     filename_pattern = config.get("general", "filename_pattern", fallback=os.getenv("OUTPUT_FILENAME_PATTERN", "{time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv"))
     log_file = config.get("general", "log_file", fallback=os.getenv("LOG_FILE", "")).strip()
 
-    # Twitch Credentials
-    client_id = config.get("twitch", "client_id", fallback=os.getenv("CLIENT_ID", os.getenv("TWITCH_CLIENT_ID", ""))).strip()
-    client_secret = config.get("twitch", "client_secret", fallback=os.getenv("CLIENT_SECRET", os.getenv("TWITCH_CLIENT_SECRET", ""))).strip()
-    user_token = config.get("twitch", "user_token", fallback=os.getenv("TWITCH_USER_TOKEN", "")).replace("oauth:", "").strip()
+    # Twitch Credentials - Fallback-Reihenfolge: Config-Datei -> systemd-creds
+    # ($CREDENTIALS_DIRECTORY/twitch-secrets, siehe _load_credentials_directory_env())
+    # -> Env-Var direkt.
+    credential_env = _load_credentials_directory_env()
+    client_id = config.get(
+        "twitch", "client_id",
+        fallback=credential_env.get("CLIENT_ID") or os.getenv("CLIENT_ID", os.getenv("TWITCH_CLIENT_ID", ""))
+    ).strip()
+    client_secret = config.get(
+        "twitch", "client_secret",
+        fallback=credential_env.get("CLIENT_SECRET") or os.getenv("CLIENT_SECRET", os.getenv("TWITCH_CLIENT_SECRET", ""))
+    ).strip()
+    user_token = config.get(
+        "twitch", "user_token",
+        fallback=credential_env.get("TWITCH_USER_TOKEN") or os.getenv("TWITCH_USER_TOKEN", "")
+    ).replace("oauth:", "").strip()
 
     # Streamlink Defaults
     default_quality = config.get("streamlink", "stream_quality", fallback=os.getenv("STREAM_QUALITY", "best"))
