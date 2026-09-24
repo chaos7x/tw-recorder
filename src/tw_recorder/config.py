@@ -177,6 +177,18 @@ def check_secrets_permissions():
     Warnt, falls recorder.conf/conf.d Twitch-Credentials (client_secret/
     user_token) im Klartext enthält, aber für Gruppe/Andere lesbar ist.
 
+    Prüft dazu bewusst über config_obj.has_option(), ob client_secret/
+    user_token TATSÄCHLICH in einer Config-DATEI stehen - nicht nur, ob der
+    aufgelöste Wert (cfg["client_secret"]/cfg["user_token"]) nicht leer ist,
+    denn der kann auch über den Env-Fallback kommen (CLIENT_SECRET/
+    TWITCH_CLIENT_SECRET/TWITCH_USER_TOKEN, z.B. via systemd-creds/
+    LoadCredentialEncrypted= + EnvironmentFile=, siehe README). Ein reiner
+    Wert-Check würde recorder.confs eigene Dateirechte fälschlich bemängeln,
+    obwohl die Datei nach einer solchen Migration gar kein Secret mehr enthält
+    und ihre Rechte damit irrelevant sind (derselbe Fehlalarm-Bug wie kürzlich
+    in yt-uploads get_access_token(), nur mit anderer Ursache: dort kannte der
+    Check keine ACLs, hier würde er die falsche Datei prüfen).
+
     Anders als bei yt-uploads selbst geschriebenen OAuth-Credentials wird hier
     nur gewarnt statt aktiv korrigiert: die Datei wird per (meist :ro-)
     Bind-Mount vom Host verwaltet, ein chmod von innen würde bei einem
@@ -186,7 +198,8 @@ def check_secrets_permissions():
     Poll-Tick, um Log-Spam zu vermeiden.
     """
     cfg = load_config()
-    if not (cfg["client_secret"] or cfg["user_token"]):
+    config_obj = cfg["config_obj"]
+    if not (config_obj.has_option("twitch", "client_secret") or config_obj.has_option("twitch", "user_token")):
         return
 
     config_files = []

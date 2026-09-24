@@ -176,6 +176,53 @@ systemctl enable --now tw-recorder
 service tw-recorder start
 ```
 
+### 🔒 Optional: Twitch-Credentials mit systemd-creds verschlüsseln (nur Dämon/.deb-Paket)
+
+`client_secret`/`user_token` landen sonst im Klartext in `recorder.conf`/`conf.d/*.conf` - `check_secrets_permissions()` warnt zwar, wenn die Datei zusätzlich für Gruppe/Andere lesbar ist, verhindert aber nicht, dass die Secrets überhaupt im Klartext auf der Platte liegen. Mit `LoadCredentialEncrypted=` (systemd >= 250) lässt sich das vermeiden. Anders als bei yt-upload gibt es hier aber keine eigene Credentials-Datei, die `tw-recorder` selbst ausliest - `client_id`/`client_secret`/`user_token` kommen stattdessen über die bereits vorhandenen Env-Var-Fallbacks (`CLIENT_ID`/`CLIENT_SECRET`/`TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET`/`TWITCH_USER_TOKEN`, siehe `config.py`), injiziert über systemds `EnvironmentFile=`, das eine Datei im `KEY=VALUE`-Format direkt als Environment einliest:
+
+```bash
+# 1. Klartext-Secrets als KEY=VALUE-Datei anlegen (einmalig, als root)
+cat > /etc/tw-recorder/twitch-secrets << 'EOF'
+CLIENT_SECRET=dein_client_secret
+TWITCH_USER_TOKEN=dein_user_token
+EOF
+
+# 2. Verschlüsseln (--with-key=tpm2 bindet die .cred-Datei zusätzlich an dieses
+#    eine Gerät, sonst wird automatisch ein maschinen-eigener Schlüssel unter
+#    /var/lib/systemd/credential.secret verwendet)
+systemd-creds encrypt \
+  --name=twitch-secrets \
+  /etc/tw-recorder/twitch-secrets \
+  /etc/tw-recorder/twitch-secrets.cred
+
+# 3. Override-Datei anlegen statt die Unit direkt zu editieren
+systemctl edit tw-recorder
+```
+
+Im Editor, der sich dabei öffnet, folgendes Override-Snippet einfügen:
+
+```ini
+[Service]
+LoadCredentialEncrypted=twitch-secrets:/etc/tw-recorder/twitch-secrets.cred
+EnvironmentFile=%d/twitch-secrets
+```
+
+(`%d` ist der systemd-Specifier für `$CREDENTIALS_DIRECTORY`, das private, nur für diesen Dienst sichtbare tmpfs mit der entschlüsselten Kopie.)
+
+```bash
+# 4. client_secret/user_token aus recorder.conf/conf.d entfernen, sonst
+#    gewinnt der Datei-Wert weiterhin gegen den injizierten Env-Wert:
+#    config.get(..., fallback=...) greift nur, wenn der Key in der Datei
+#    komplett fehlt, nicht wenn er nur leer/auskommentiert ist.
+
+# 5. Erst NACH erfolgreichem Test (systemctl restart tw-recorder, Logs
+#    prüfen) das Klartext-Original entfernen
+systemctl restart tw-recorder
+shred -u /etc/tw-recorder/twitch-secrets
+```
+
+**Sicherheits-Trade-off gegenüber yt-uploads Variante:** yt-upload liest seine Credentials-Datei direkt aus `$CREDENTIALS_DIRECTORY`, ohne den Umweg über echte Prozess-Umgebungsvariablen - `EnvironmentFile=` setzt die entschlüsselten Werte dagegen tatsächlich in die Umgebung des `tw-recorder`-Prozesses, wo sie (kurzzeitig, bis der Prozess sie ausliest) über `/proc/<pid>/environ` für andere Prozesse mit ausreichenden Rechten (root, oder derselbe UID) einsehbar wären. Das ist weiterhin eine echte Verbesserung gegenüber einer dauerhaft unverschlüsselten `recorder.conf` auf der Platte, aber kein vollständiges Äquivalent zu yt-uploads ACL-/Datei-basiertem Modell. Nach Schritt 4 entfällt jedenfalls die Warnung aus `check_secrets_permissions()` von selbst, da `recorder.conf` dann kein Secret mehr enthält.
+
 ### Alternative: Standalone .pyz (kein pip nötig)
 
 `./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein (Version >= 8.2.0, siehe Hinweis oben):
