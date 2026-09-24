@@ -196,9 +196,11 @@ TWITCH_USER_TOKEN="dein_user_token"
 EOF
 chmod 600 /etc/tw-recorder/twitch-secrets
 
-# 2. Verschlüsseln (--with-key=tpm2 bindet die .cred-Datei zusätzlich an dieses
-#    eine Gerät, sonst wird automatisch ein maschinen-eigener Schlüssel unter
-#    /var/lib/systemd/credential.secret verwendet). --name MUSS exakt dem
+# 2. Verschlüsseln (Standard ist --with-key=auto: bindet automatisch an
+#    einen vorhandenen TPM2-Chip zusätzlich zum maschinen-eigenen Schlüssel
+#    unter /var/lib/systemd/credential.secret - ganz ohne manuelle Angabe.
+#    --with-key=tpm2 erzwingt AUSSCHLIESSLICH TPM2, ohne den Host-Schlüssel).
+#    --name MUSS exakt dem
 #    Namen vor dem Doppelpunkt in LoadCredentialEncrypted= unten entsprechen
 #    - sonst schlägt die Entschlüsselung beim Dienststart fehl.
 systemd-creds encrypt \
