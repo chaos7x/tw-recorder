@@ -180,7 +180,9 @@ service tw-recorder start
 
 `client_secret`/`user_token` landen sonst im Klartext in `recorder.conf`/`conf.d/*.conf` - `check_secrets_permissions()` warnt zwar, wenn die Datei zusätzlich für Gruppe/Andere lesbar ist, verhindert aber nicht, dass die Secrets überhaupt im Klartext auf der Platte liegen. Mit `LoadCredentialEncrypted=` (systemd >= 250) lässt sich das vermeiden.
 
-Anders als bei yt-upload gibt es hier keine eigene Credentials-Datei mit konfigurierbarem Pfad - `tw-recorder` liest `client_id`/`client_secret`/`user_token` stattdessen optional direkt aus `$CREDENTIALS_DIRECTORY/twitch-secrets` (`config._load_credentials_directory_env()`), falls diese Datei existiert. **Wichtig:** `EnvironmentFile=%d/twitch-secrets` funktioniert dafür NICHT zuverlässig - der `%d`-Specifier wird dort nicht wie erwartet aufgelöst und führt zu `Failed to load environment files`/einer Restart-Crashloop des gesamten Diensts. `tw-recorder` liest die entschlüsselte Datei deshalb selbst ein, ganz ohne `EnvironmentFile=`:
+Analog zu yt-uploads `CREDENTIALS_FILE`: `client_id`/`client_secret`/`user_token` lassen sich optional aus einer KEY=VALUE-Datei nachladen, deren Pfad in `TWITCH_CREDENTIALS_FILE` steht (`config._load_twitch_credentials_file()`) - ein einzelner, frei konfigurierbarer Pfad statt einer `$CREDENTIALS_DIRECTORY`-spezifischen Sonderlogik. `tw-recorder` weiß dabei nichts von systemd-Credentials, es liest einfach "die Datei, deren Pfad in `TWITCH_CREDENTIALS_FILE` steht".
+
+**Wichtig:** Um diesen Pfad bei systemd-creds auf die entschlüsselte Kopie zeigen zu lassen, `Environment=TWITCH_CREDENTIALS_FILE=%d/twitch-secrets` verwenden (ein einzelner Wert mit `%d`-Specifier) - **nicht** `EnvironmentFile=%d/twitch-secrets` (eine ganze, bulk-eingelesene Datei). Letzteres funktioniert nicht zuverlässig: der `%d`-Specifier wird darin nicht wie erwartet aufgelöst und führt zu `Failed to load environment files`/einer Restart-Crashloop des gesamten Diensts (real reproduziert). `Environment=` mit einem einzelnen Wert ist dagegen zuverlässig - genau das Muster, das yt-uploads `CREDENTIALS_FILE` bereits nutzt:
 
 ```bash
 # 1. Klartext-Secrets als KEY=VALUE-Datei anlegen (einmalig, als root) -
@@ -208,17 +210,18 @@ systemd-creds encrypt \
 systemctl edit tw-recorder
 ```
 
-Im Editor, der sich dabei öffnet, folgendes Override-Snippet einfügen - **nur `LoadCredentialEncrypted=`, kein `EnvironmentFile=`**:
+Im Editor, der sich dabei öffnet, folgendes Override-Snippet einfügen - `Environment=`, **kein** `EnvironmentFile=`:
 
 ```ini
 [Service]
 LoadCredentialEncrypted=twitch-secrets:/etc/tw-recorder/twitch-secrets.cred
+Environment=TWITCH_CREDENTIALS_FILE=%d/twitch-secrets
 ```
 
 ```bash
 # 4. client_secret/user_token aus recorder.conf/conf.d entfernen bzw.
 #    auskommentieren, sonst gewinnt der Datei-Wert weiterhin gegen den aus
-#    $CREDENTIALS_DIRECTORY gelesenen Wert: config.get(..., fallback=...)
+#    TWITCH_CREDENTIALS_FILE gelesenen Wert: config.get(..., fallback=...)
 #    greift nur, wenn der Key in der Datei komplett fehlt.
 
 # 5. Erst NACH erfolgreichem Test (systemctl restart tw-recorder, Logs
@@ -229,7 +232,9 @@ shred -u /etc/tw-recorder/twitch-secrets
 
 Die `.cred`-Datei ist Base64-kodierter Text (kein rohes Binärformat, `cat` ist also unproblematisch), ohne den Maschinen-Schlüssel unter `/var/lib/systemd/credential.secret` (root-only) aber nicht entschlüsselbar.
 
-Anders als bei einem `EnvironmentFile=`-Ansatz landet das entschlüsselte Secret hier zu keinem Zeitpunkt als echte Prozess-Umgebungsvariable (kein `/proc/<pid>/environ`-Exposure) - `tw-recorder` liest die Datei direkt, genau wie es systemd selbst für Anwendungscode empfiehlt (siehe [systemd/systemd docs/CREDENTIALS.md](https://github.com/systemd/systemd/blob/main/docs/CREDENTIALS.md)). Nach Schritt 4 entfällt außerdem die Warnung aus `check_secrets_permissions()` von selbst, da `recorder.conf` dann kein Secret mehr enthält.
+`TWITCH_CREDENTIALS_FILE` selbst landet zwar als echte Prozess-Umgebungsvariable (über `/proc/<pid>/environ` einsehbar) - ihr Wert ist aber nur ein **Dateipfad** (z.B. `/run/credentials/tw-recorder.service/twitch-secrets`), kein Secret. Das eigentliche `client_secret`/`user_token` liest `tw-recorder` direkt aus der Datei, es landet nie selbst in einer Umgebungsvariable - genau das Zugriffsmuster, das systemd selbst für Anwendungscode empfiehlt (siehe [systemd/systemd docs/CREDENTIALS.md](https://github.com/systemd/systemd/blob/main/docs/CREDENTIALS.md)). Nach Schritt 4 entfällt außerdem die Warnung aus `check_secrets_permissions()` von selbst, da `recorder.conf` dann kein Secret mehr enthält.
+
+`TWITCH_CREDENTIALS_FILE` funktioniert dabei unabhängig von systemd-creds - der Pfad kann genauso auf eine gewöhnliche Datei irgendwo auf der Platte zeigen, falls eine einzelne KEY=VALUE-Datei statt der `[twitch]`-Sektion in `recorder.conf` bevorzugt wird.
 
 ### Alternative: Standalone .pyz (kein pip nötig)
 
