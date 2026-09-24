@@ -269,6 +269,44 @@ class TestCheckSecretsPermissions:
 
         assert caplog.records == []
 
+    def test_no_warning_when_secret_comes_only_from_env(self, config, tmp_path, monkeypatch, caplog):
+        """
+        Regression: cfg["client_secret"] ist auch dann nicht leer, wenn der
+        Wert nur ueber den Env-Fallback kommt (z.B. systemd-creds +
+        EnvironmentFile=, siehe README) - recorder.conf enthaelt dann gar
+        kein Secret, ihre Dateirechte sind irrelevant und duerfen keine
+        Warnung ausloesen, obwohl die Datei group/other-lesbar ist.
+        """
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[general]\nstorage_dir = /storage\n")
+        main_conf.chmod(0o644)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+        monkeypatch.setenv("CLIENT_SECRET", "supersecret-from-env")
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert caplog.records == []
+
+    def test_still_warns_when_secret_in_file_even_if_env_also_set(self, config, tmp_path, monkeypatch, caplog):
+        """Die Datei-Praesenz entscheidet, nicht ob zusaetzlich auch ein Env-Wert existiert."""
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[twitch]\nclient_secret = supersecret\n")
+        main_conf.chmod(0o644)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+        monkeypatch.setenv("CLIENT_SECRET", "another-secret-from-env")
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert any("lesbar" in r.message for r in caplog.records)
+
 
 class TestGetExtraArgs:
     def test_no_token_no_webbrowser(self, config):
