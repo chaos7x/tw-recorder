@@ -70,13 +70,13 @@ def _is_dedicated_mount(path: Path) -> bool:
     ins Image gebacken hat (z.B. /log) - eine reine is_dir()-Prüfung kann
     diese beiden Fälle nicht unterscheiden, da `mkdir -p` das Verzeichnis auch
     ganz ohne jeden Mount anlegt. Vergleicht dazu die Geräte-ID (st_dev) von
-    path und seinem Elternverzeichnis: unterschiedliche st_dev bedeutet, dass
-    dort tatsächlich ein Volume/Bind-Mount eingehängt ist.
+    path mit der des Root-Dateisystems (/), wie in fetchbridge: so wird auch
+    ein Mount erkannt, der weiter oben im Pfad liegt als path selbst.
     """
     if not path.is_dir():
         return False
     try:
-        return path.stat().st_dev != path.parent.stat().st_dev
+        return path.stat().st_dev != Path("/").stat().st_dev
     except OSError:
         return False
 
