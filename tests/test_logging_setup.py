@@ -147,7 +147,7 @@ class TestIsDedicatedMount:
         assert logging_setup._is_dedicated_mount(logging_setup.Path("/log")) is False
 
     def test_returns_false_for_plain_baked_in_directory_same_device(self, logging_setup, monkeypatch):
-        """Gleiche st_dev wie das Elternverzeichnis = kein echter Mount, nur ein normaler Ordner."""
+        """Gleiche st_dev wie das Root-Dateisystem = kein echter Mount, nur ein normaler Ordner."""
         real_stat = logging_setup.Path.stat
         monkeypatch.setattr(logging_setup.Path, "is_dir", lambda self: True)
         monkeypatch.setattr(
@@ -158,7 +158,7 @@ class TestIsDedicatedMount:
         assert logging_setup._is_dedicated_mount(logging_setup.Path("/log")) is False
 
     def test_returns_true_for_real_mount_different_device(self, logging_setup, monkeypatch):
-        """Unterschiedliche st_dev zum Elternverzeichnis = tatsächlich eingehängtes Volume/Bind-Mount."""
+        """Unterschiedliche st_dev zum Root-Dateisystem = tatsächlich eingehängtes Volume/Bind-Mount."""
         real_stat = logging_setup.Path.stat
         monkeypatch.setattr(logging_setup.Path, "is_dir", lambda self: True)
 
@@ -172,6 +172,22 @@ class TestIsDedicatedMount:
         monkeypatch.setattr(logging_setup.Path, "stat", fake_stat)
 
         assert logging_setup._is_dedicated_mount(logging_setup.Path("/log")) is True
+
+    def test_detects_mount_higher_up_in_path(self, logging_setup, monkeypatch):
+        """Mount auf /srv, Unterverzeichnis liegt auf demselben Gerät wie sein Parent - trotzdem ein Mount."""
+        real_stat = logging_setup.Path.stat
+        monkeypatch.setattr(logging_setup.Path, "is_dir", lambda self: True)
+
+        def fake_stat(self):
+            if str(self) == "/":
+                return _FakeStat(st_dev=1)
+            if str(self).startswith("/srv"):
+                return _FakeStat(st_dev=2)
+            return real_stat(self)
+
+        monkeypatch.setattr(logging_setup.Path, "stat", fake_stat)
+
+        assert logging_setup._is_dedicated_mount(logging_setup.Path("/srv/media-pipeline/log")) is True
 
     def test_permission_error_on_stat_returns_false(self, logging_setup, monkeypatch):
         real_stat = logging_setup.Path.stat

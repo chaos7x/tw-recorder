@@ -1,6 +1,7 @@
 """
-Tests für _parse_recorded_filename(), _write_xattrs() und
-_ensure_channel_dir() (recorder.py).
+Tests für die Hilfsfunktionen von recorder.py (_parse_recorded_filename(),
+_write_xattrs(), _ensure_channel_dir(), _remux_recording(),
+_monitor_recording() u.a.).
 
 Der alte naive "_"-Split zwischen Kategorie und Titel (cat_title_parts =
 rest_after_channel.split("_", 1)) hat mehrteilige Kategorienamen falsch
@@ -236,3 +237,120 @@ class TestEnsureChannelDir:
 
         assert out_dir.is_dir()
         assert "2775" in caplog.text
+
+
+class TestSanitizePathComponent:
+    def test_replaces_path_special_chars_and_collapses_whitespace(self, recorder):
+        assert recorder._sanitize_path_component('Just  Chatting/IRL: "x"', "Fallback") == "Just_Chatting_IRL_x"
+
+    def test_empty_result_uses_fallback(self, recorder):
+        assert recorder._sanitize_path_component("  / ", "NoCategory") == "NoCategory"
+
+
+class TestBuildMetaTitle:
+    def test_short_title_is_kept(self, recorder):
+        assert (
+            recorder._build_meta_title("chan", "Gaming", "Hello World!", "2026-09-23")
+            == "chan - Gaming: Hello World! (2026-09-23)"
+        )
+
+    def test_long_title_is_truncated_to_95_chars(self, recorder):
+        meta_title = recorder._build_meta_title("chan", "Gaming", "x" * 200, "2026-09-23")
+        assert len(meta_title) <= 95
+        assert meta_title.startswith("chan - Gaming: ")
+        assert meta_title.endswith("... (2026-09-23)")
+
+
+class TestRemuxRecording:
+    def _cfg(self):
+        return {"filename_pattern": "{time:%Y-%m-%d}_{channel}_{category}_{title}.mkv", "use_ionice": False}
+
+    def test_remuxes_latest_ts_and_deletes_it(self, recorder, tmp_path, monkeypatch):
+        ts_file = tmp_path / "2026-09-23_20-00_chan_[Just Chatting]_Hello <3.ts"
+        ts_file.write_bytes(b"data")
+        calls = []
+
+        class FakeCompleted:
+            returncode = 0
+
+        monkeypatch.setattr(recorder.subprocess, "run", lambda cmd, check: calls.append(cmd) or FakeCompleted())
+        monkeypatch.setattr(recorder, "_write_xattrs", lambda path, attrs: None)
+
+        recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+        assert len(calls) == 1
+        assert calls[0][-1] == str(tmp_path / "2026-09-23_chan_Just_Chatting_Hello_♥.mkv")
+        assert "TITLE=chan - Just_Chatting: Hello ♥ (2026-09-23)" in calls[0]
+        assert not ts_file.exists()
+
+    def test_failed_ffmpeg_keeps_ts_file(self, recorder, tmp_path, monkeypatch):
+        ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
+        ts_file.write_bytes(b"data")
+
+        class FakeCompleted:
+            returncode = 1
+
+        monkeypatch.setattr(recorder.subprocess, "run", lambda cmd, check: FakeCompleted())
+
+        recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+        assert ts_file.exists()
+
+    def test_stale_ts_file_is_skipped(self, recorder, tmp_path, monkeypatch):
+        ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
+        ts_file.write_bytes(b"data")
+        old = ts_file.stat().st_mtime - 3600
+        os.utime(ts_file, (old, old))
+        monkeypatch.setattr(recorder.subprocess, "run", lambda *a, **k: pytest.fail("ffmpeg darf nicht laufen"))
+
+        recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+        assert ts_file.exists()
+
+
+class TestMonitorRecording:
+    class FakeProc:
+        def __init__(self):
+            self.terminated = False
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout):
+            return 0
+
+        def kill(self):
+            pass
+
+    def test_stop_event_terminates_process(self, recorder, monkeypatch):
+        import threading
+
+        stop_event = threading.Event()
+        stop_event.set()
+        proc = self.FakeProc()
+        cfg = {"sleep_interval": 60, "split_on_title_change": False, "title_check_interval": 60}
+
+        split, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, stop_event)
+
+        assert split is False
+        assert proc.terminated
+
+    def test_title_change_triggers_split(self, recorder, monkeypatch):
+        import threading
+
+        infos = iter([
+            {"online": True, "title": "A", "category": "Gaming"},
+            {"online": True, "title": "B", "category": "Gaming"},
+        ])
+        monkeypatch.setattr(recorder, "get_stream_info", lambda url, cfg: next(infos))
+        monkeypatch.setattr(recorder.time, "sleep", lambda s: None)
+        proc = self.FakeProc()
+        cfg = {"sleep_interval": 60, "split_on_title_change": True, "title_check_interval": 0}
+
+        split, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, threading.Event())
+
+        assert split is True
+        assert proc.terminated

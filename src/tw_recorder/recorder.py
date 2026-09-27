@@ -169,14 +169,237 @@ def _build_out_pattern(out_dir, channel: str) -> str:
     return str(out_dir / f"{{time:%Y-%m-%d_%H-%M}}_{channel}_[{{category}}]_{{title}}.ts")
 
 
+def _stop_process(proc: subprocess.Popen, timeout: float) -> None:
+    """Beendet proc per terminate(), nach timeout Sekunden notfalls per kill()."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def _fetch_reference_info(url: str, cfg: dict) -> tuple[str | None, str | None]:
+    """Liefert (title, category) des laufenden Streams als Referenz für die Split-Erkennung."""
+    info = get_stream_info(url, cfg)
+    if info and info["online"]:
+        return info["title"], info["category"]
+    return None, None
+
+
+def _sanitize_path_component(text: str, fallback: str) -> str:
+    """Ersetzt Pfad-Sonderzeichen und Whitespace-Folgen durch '_'; leer -> fallback."""
+    text = re.sub(r'[/\\:*?"<>|]', '_', text)
+    text = re.sub(r'[\s_]+', '_', text).strip('_')
+    return text or fallback
+
+
+def _build_meta_title(channel: str, category: str, full_title: str, date_str: str) -> str:
+    """Baut den Container-TITLE "<Kanal> - <Kategorie>: <Titel> (<Datum>)", gekürzt auf 95 Zeichen."""
+    clean_title = "".join(
+        c for c in full_title
+        if c.isalnum() or c in (" ", "-", "_", "!", "?", ".", "♥")
+    ).strip()
+    clean_title = re.sub(r'\s+', ' ', clean_title)
+
+    prefix = f"{channel} - {category}: "
+    suffix = f" ({date_str})"
+    meta_title = f"{prefix}{clean_title}{suffix}"
+    if len(meta_title) <= 95:
+        return meta_title
+
+    max_title_len = 95 - len(prefix) - len(suffix) - 3
+    clean_title = clean_title[:max_title_len].strip() + "..." if max_title_len > 0 else "..."
+    return f"{prefix}{clean_title}{suffix}"
+
+
+def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
+    """
+    Remuxt die zuletzt geschriebene .ts-Aufnahme von channel verlustfrei nach
+    .mkv (Name laut filename_pattern), setzt Container-Tags und xattrs und
+    löscht danach die .ts-Datei. Fehler werden nur geloggt.
+    """
+    try:
+        ts_files = sorted(out_dir.glob("*.ts"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if not ts_files:
+            logger.warning(
+                f"Kein .ts-File für {channel} in {out_dir} gefunden - "
+                "Remuxing übersprungen (Aufnahme evtl. zu kurz/fehlgeschlagen)."
+            )
+            return
+
+        latest_file = ts_files[0]
+        age_sec = time.time() - latest_file.stat().st_mtime
+        if age_sec >= 300:
+            logger.warning(
+                f"Neueste .ts-Datei für {channel} ({latest_file.name}) ist "
+                f"{age_sec:.0f}s alt (Limit: 300s) - vermutlich von einem "
+                "früheren Lauf, Remuxing übersprungen."
+            )
+            return
+
+        date_str, time_str, parsed_channel, category, full_title = (
+            _parse_recorded_filename(latest_file.stem, channel)
+        )
+        category = _sanitize_path_component(category, "NoCategory")
+
+        # Kürzel <3 durch ein echtes Unicode-Herz ersetzen, übrige < und > entfernen
+        full_title = full_title.replace("<3", "♥")
+        full_title = re.sub(r'[<>]', '', full_title)
+
+        # Bewahrt Unicode/Umlaute, filtert Symbole/Steuerzeichen und Pfad-Sonderzeichen
+        safe_title = "".join(
+            char for char in full_title
+            if unicodedata.category(char) not in {"So", "Sk", "Cf"} or char == "♥"
+        )
+        safe_title = _sanitize_path_component(safe_title, "Untitled")
+
+        # Datum als datetime-Objekt, damit filename_pattern {time:...}-Formate nutzen kann
+        try:
+            dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=UTC)
+        except ValueError:
+            dt_obj = datetime.now(UTC)
+
+        try:
+            target_filename = cfg["filename_pattern"].format(
+                time=dt_obj,
+                channel=parsed_channel,
+                author=parsed_channel,  # Alias für Streamlink-Kompatibilität
+                title=safe_title,
+                category=category
+            )
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Fehler beim Formatieren von filename_pattern ({e}). Nutze Fallback-Name.")
+            target_filename = f"{date_str}_{time_str}_{parsed_channel}_{category}_{safe_title}.mkv"
+
+        # Falls das Pattern keine Endung hat, erzwinge .mkv
+        final_target_path = out_dir / target_filename
+        if not final_target_path.suffix:
+            final_target_path = final_target_path.with_suffix(".mkv")
+
+        meta_date_compact = date_str.replace("-", "") if date_str else "00000000"
+        meta_title = _build_meta_title(parsed_channel, category, full_title, date_str)
+        meta_comment = full_title
+
+        ffmpeg_cmd = [
+            "ffmpeg", "-loglevel", "error",
+            "-i", str(latest_file),
+            "-metadata", f"TITLE={meta_title}",
+            "-metadata", f"COMMENT={meta_comment}",
+            "-metadata", f"ARTIST={parsed_channel}",
+            "-metadata", f"PURL=https://twitch.tv/{parsed_channel}",
+            "-metadata", f"DATE={meta_date_compact}",
+            "-metadata", f"creation_time={meta_date_compact}",
+            "-map", "0:v",
+            "-map", "0:a?",
+            "-c", "copy",
+            str(final_target_path)
+        ]
+
+        if cfg["use_ionice"] and shutil.which("ionice"):
+            # Idle-I/O-Klasse (-c3): Remux bekommt nur Platten-I/O, wenn gerade
+            # nichts anderes (v.a. laufende Aufnahmen anderer Kanäle) es braucht.
+            ffmpeg_cmd = ["ionice", "-c3"] + ffmpeg_cmd
+
+        ff_proc = subprocess.run(ffmpeg_cmd, check=False)
+        if ff_proc.returncode == 0:
+            if latest_file.exists():
+                latest_file.unlink()
+            logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
+            _write_xattrs(final_target_path, {
+                "user.dublincore.title": meta_title,
+                "user.dublincore.contributor": parsed_channel,
+                "user.dublincore.date": date_str,
+                "user.dublincore.description": meta_comment,
+                "user.xdg.referrer.url": f"https://twitch.tv/{parsed_channel}",
+            })
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
+        logger.warning(f"Fehler beim FFmpeg-Remuxing für {channel}: {e}")
+
+
+def _monitor_recording(proc: subprocess.Popen, url: str, channel: str, cfg: dict,
+                       stop_event: threading.Event) -> tuple[bool, dict]:
+    """
+    Überwacht einen laufenden Streamlink-Prozess bis zu dessen Ende, einem
+    Stop-Signal oder einer Titel-/Kategorieänderung (split_on_title_change).
+    Lädt die Config bei Änderung nach, damit Einstellungen auch während einer
+    mehrstündigen Aufnahme greifen. Gibt (title_split_triggered, cfg) zurück.
+    """
+    sleep_interval = cfg["sleep_interval"]
+    last_title, last_category = (None, None)
+    if cfg["split_on_title_change"]:
+        last_title, last_category = _fetch_reference_info(url, cfg)
+    last_title_check = time.monotonic()
+    last_cfg_reload = time.monotonic()
+    last_cfg_hash, _ = config.get_config_hash()
+
+    while proc.poll() is None:
+        if stop_event.is_set():
+            _stop_process(proc, timeout=5)
+            return False, cfg
+
+        if (time.monotonic() - last_cfg_reload) >= sleep_interval:
+            last_cfg_reload = time.monotonic()
+            current_cfg_hash, _ = config.get_config_hash()
+            if current_cfg_hash != last_cfg_hash:
+                last_cfg_hash = current_cfg_hash
+                cfg = config.load_config()
+                if cfg["split_on_title_change"] and last_title is None:
+                    # Feature wurde gerade erst aktiviert -> Referenz jetzt nachträglich ermitteln
+                    last_title, last_category = _fetch_reference_info(url, cfg)
+
+        if (
+            cfg["split_on_title_change"]
+            and last_title is not None
+            and (time.monotonic() - last_title_check) >= cfg["title_check_interval"]
+        ):
+            last_title_check = time.monotonic()
+            info = get_stream_info(url, cfg)
+            if info and info["online"] and (
+                info["title"] != last_title or info["category"] != last_category
+            ):
+                logger.info(
+                    f"✂️ Titel-/Kategorieänderung erkannt für {channel} "
+                    f"('{last_title}'/'{last_category}' -> "
+                    f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme."
+                )
+                _stop_process(proc, timeout=10)
+                return True, cfg
+
+        time.sleep(1)
+
+    return False, cfg
+
+
+def _start_streamlink(url: str, quality: str, channel: str, out_pattern: str, cfg: dict) -> subprocess.Popen:
+    """Startet Streamlink und leitet dessen Ausgabe in einem Hintergrund-Thread ans Logging weiter."""
+    cmd = [
+        "streamlink",
+        "--loglevel", cfg["streamlink_loglevel"],
+        "--fs-safe-rules", "POSIX",
+        *config.get_extra_args(cfg),
+        "-o", out_pattern,
+        url,
+        quality,
+    ]
+    # Enthält ggf. den OAuth-Token (--twitch-api-header) - daher ausschließlich auf DEBUG-Level.
+    logger.debug(f"Streamlink-Kommando für {channel}: {cmd}")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+    threading.Thread(target=_pump_subprocess_output, args=(proc, channel), daemon=True).start()
+    return proc
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
 
-    # Config nur bei tatsächlicher Änderung neu laden (gleicher Hash-Mechanismus
-    # wie beim Daemon selbst und bei der Titel-Split-Erkennung weiter unten),
-    # statt bei jedem Poll-Tick (alle sleep_interval Sekunden) blind neu zu
-    # parsen - besonders bei vielen gleichzeitig überwachten Kanälen spart das
-    # unnötige Datei-I/O.
+    # Config nur bei tatsächlicher Änderung neu laden (Hash-Vergleich), statt bei
+    # jedem Poll-Tick blind neu zu parsen - spart bei vielen Kanälen Datei-I/O.
     cfg = config.load_config()
     last_outer_cfg_hash, _ = config.get_config_hash()
 
@@ -186,16 +409,10 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             last_outer_cfg_hash = current_outer_cfg_hash
             cfg = config.load_config()
 
-        storage_dir = cfg["storage_dir"]
         sleep_interval = cfg["sleep_interval"]
-        pattern_tmpl = cfg["filename_pattern"]
-
-        out_dir = storage_dir / channel
+        out_dir = cfg["storage_dir"] / channel
         _ensure_channel_dir(out_dir)
-
         lock_file = out_dir / ".record.lock"
-
-        out_pattern = _build_out_pattern(out_dir, channel)
 
         if check_stream_online(url, cfg):
             lock_fd = None
@@ -212,245 +429,14 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             title_split_triggered = False
             try:
                 logger.info(f"🔴 Starte Aufzeichnung für Kanal: {channel}")
-
-                cmd = [
-                    "streamlink",
-                    "--loglevel", cfg["streamlink_loglevel"],
-                    "--fs-safe-rules", "POSIX",
-                ]
-                cmd.extend(config.get_extra_args(cfg))
-                cmd.extend([
-                    "-o", out_pattern,
-                    url,
-                    quality
-                ])
-
-                # Enthält ggf. den OAuth-Token (--twitch-api-header) - daher
-                # ausschließlich auf DEBUG-Level, nie auf INFO oder höher.
-                logger.debug(f"Streamlink-Kommando für {channel}: {cmd}")
-
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1
-                )
-                output_thread = threading.Thread(
-                    target=_pump_subprocess_output,
-                    args=(proc, channel),
-                    daemon=True
-                )
-                output_thread.start()
-
-                split_on_title_change = cfg["split_on_title_change"]
-                title_check_interval = cfg["title_check_interval"]
-
-                # Aktuellen Titel/Kategorie als Referenz für die Split-Erkennung merken
-                last_title = None
-                last_category = None
-                if split_on_title_change:
-                    initial_info = get_stream_info(url, cfg)
-                    if initial_info and initial_info["online"]:
-                        last_title = initial_info["title"]
-                        last_category = initial_info["category"]
-                last_title_check = time.monotonic()
-                last_cfg_reload = time.monotonic()
-                last_cfg_hash, _ = config.get_config_hash()
-
-                while proc.poll() is None:
-                    if stop_event.is_set():
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                        break
-
-                    # Nutzt denselben Hash-Mechanismus wie der Daemon (sync_processes),
-                    # um Config-Dateien nur bei tatsächlicher Änderung neu einzulesen,
-                    # statt sie alle paar Sekunden blind neu zu parsen. So greifen
-                    # Änderungen an split_on_title_change/title_check_interval sofort,
-                    # auch während einer laufenden (u.U. mehrstündigen) Aufnahme.
-                    if (time.monotonic() - last_cfg_reload) >= sleep_interval:
-                        last_cfg_reload = time.monotonic()
-                        current_cfg_hash, _ = config.get_config_hash()
-                        if current_cfg_hash != last_cfg_hash:
-                            last_cfg_hash = current_cfg_hash
-                            cfg = config.load_config()
-                            split_on_title_change = cfg["split_on_title_change"]
-                            title_check_interval = cfg["title_check_interval"]
-                            if split_on_title_change and last_title is None:
-                                # Feature wurde gerade erst aktiviert -> Referenz-
-                                # Titel/Kategorie jetzt nachträglich ermitteln
-                                initial_info = get_stream_info(url, cfg)
-                                if initial_info and initial_info["online"]:
-                                    last_title = initial_info["title"]
-                                    last_category = initial_info["category"]
-
-                    if (
-                        split_on_title_change
-                        and last_title is not None
-                        and (time.monotonic() - last_title_check) >= title_check_interval
-                    ):
-                        last_title_check = time.monotonic()
-                        info = get_stream_info(url, cfg)
-                        if info and info["online"] and (
-                            info["title"] != last_title or info["category"] != last_category
-                        ):
-                            logger.info(
-                                f"✂️ Titel-/Kategorieänderung erkannt für {channel} "
-                                f"('{last_title}'/'{last_category}' -> "
-                                f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme."
-                            )
-                            proc.terminate()
-                            try:
-                                proc.wait(timeout=10)
-                            except subprocess.TimeoutExpired:
-                                proc.kill()
-                            title_split_triggered = True
-                            break
-
-                    time.sleep(1)
+                proc = _start_streamlink(url, quality, channel, _build_out_pattern(out_dir, channel), cfg)
+                title_split_triggered, cfg = _monitor_recording(proc, url, channel, cfg, stop_event)
 
                 logger.info(f"⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...")
                 time.sleep(2)
-
-                try:
-                    ts_files = sorted(out_dir.glob("*.ts"), key=lambda f: f.stat().st_mtime, reverse=True)
-                    if not ts_files:
-                        logger.warning(
-                            f"Kein .ts-File für {channel} in {out_dir} gefunden - "
-                            "Remuxing übersprungen (Aufnahme evtl. zu kurz/fehlgeschlagen)."
-                        )
-                    else:
-                        latest_file = ts_files[0]
-                        age_sec = time.time() - latest_file.stat().st_mtime
-                        if age_sec >= 300:
-                            logger.warning(
-                                f"Neueste .ts-Datei für {channel} ({latest_file.name}) ist "
-                                f"{age_sec:.0f}s alt (Limit: 300s) - vermutlich von einem "
-                                "früheren Lauf, Remuxing übersprungen."
-                            )
-                        else:
-
-                            full_stem = latest_file.stem
-
-                            date_str, time_str, parsed_channel, category, full_title = (
-                                _parse_recorded_filename(full_stem, channel)
-                            )
-                            category = re.sub(r'[/\\:*?"<>|]', '_', category)
-                            category = re.sub(r'[\s_]+', '_', category).strip('_')
-                            if not category:
-                                category = "NoCategory"
-
-                            # 1. Kürzel <3 durch ein echtes Unicode-Herz ersetzen
-                            full_title = full_title.replace("<3", "♥")
-
-                            # 2. Übrige einzelne < und > Zeichen ersatzlos entfernen
-                            full_title = re.sub(r'[<>]', '', full_title)
-
-                            # Sanitize title: Bewahrt Unicode/Umlaute, filtert nur echte Pfad-Sonderzeichen
-                            safe_title = "".join(
-                                char for char in full_title
-                                if unicodedata.category(char) not in {"So", "Sk", "Cf"} or char == "♥"
-                            )
-
-                            safe_title = re.sub(r'[/\\:*?"<>|]', '_', safe_title)
-                            safe_title = re.sub(r'[\s_]+', '_', safe_title).strip('_')
-                            if not safe_title:
-                                safe_title = "Untitled"
-
-                            # Datum als datetime-Objekt parsen für volle Kompatibilität mit {time:...} Formaten
-                            # For DTZ007 (strptime):
-                            try:
-                                dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=UTC)
-                            except ValueError:
-                                # For DTZ005 (datetime.now):
-                                dt_obj = datetime.now(UTC)
-
-                            try:
-                                target_filename = pattern_tmpl.format(
-                                    time=dt_obj,
-                                    channel=parsed_channel,
-                                    author=parsed_channel,  # Alias für Streamlink-Kompatibilität
-                                    title=safe_title,
-                                    category=category
-                                )
-                            except (KeyError, ValueError) as e:
-                                logger.warning(f"Fehler beim Formatieren von filename_pattern ({e}). Nutze Fallback-Name.")
-                                target_filename = f"{date_str}_{time_str}_{parsed_channel}_{category}_{safe_title}.mkv"
-
-                            # Falls das Pattern keine Endung hat, erzwinge .mkv
-                            final_target_path = out_dir / target_filename
-                            if not final_target_path.suffix:
-                                final_target_path = final_target_path.with_suffix(".mkv")
-
-                            meta_date_compact = date_str.replace("-", "") if date_str else "00000000"
-
-                            clean_title_meta = "".join(
-                                c for c in full_title 
-                                if c.isalnum() or c in (" ", "-", "_", "!", "?", ".", "♥")
-                            ).strip()
-
-                            clean_title_meta = re.sub(r'\s+', ' ', clean_title_meta)
-                            prefix = f"{parsed_channel} - {category}: "
-                            suffix = f" ({date_str})"
-
-                            raw_meta_title = f"{prefix}{clean_title_meta}{suffix}"
-
-                            if len(raw_meta_title) > 95:
-                                max_title_len = 95 - len(prefix) - len(suffix) - 3
-                                if max_title_len > 0:
-                                    clean_title_meta = clean_title_meta[:max_title_len].strip() + "..."
-                                else:
-                                    clean_title_meta = "..."
-                                meta_title = f"{prefix}{clean_title_meta}{suffix}"
-                            else:
-                                meta_title = raw_meta_title
-
-                            meta_comment = full_title
-
-                            ffmpeg_cmd = [
-                                "ffmpeg", "-loglevel", "error",
-                                "-i", str(latest_file),
-                                "-metadata", f"TITLE={meta_title}",
-                                "-metadata", f"COMMENT={meta_comment}",
-                                "-metadata", f"ARTIST={parsed_channel}",
-                                "-metadata", f"PURL=https://twitch.tv/{parsed_channel}",
-                                "-metadata", f"DATE={meta_date_compact}",
-                                "-metadata", f"creation_time={meta_date_compact}",
-                                "-map", "0:v",
-                                "-map", "0:a?",
-                                "-c", "copy",
-                                str(final_target_path)
-                            ]
-
-                            if cfg["use_ionice"] and shutil.which("ionice"):
-                                # Idle-I/O-Klasse (-c3): Remux bekommt nur Platten-
-                                # I/O, wenn gerade nichts anderes (v.a. laufende
-                                # Aufnahmen auf anderen Kanälen) es benötigt.
-                                ffmpeg_cmd = ["ionice", "-c3"] + ffmpeg_cmd
-
-                            ff_proc = subprocess.run(ffmpeg_cmd, check=False)
-                            if ff_proc.returncode == 0:
-                                if latest_file.exists():
-                                    latest_file.unlink()
-                                logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
-                                _write_xattrs(final_target_path, {
-                                    "user.dublincore.title": meta_title,
-                                    "user.dublincore.contributor": parsed_channel,
-                                    "user.dublincore.date": date_str,
-                                    "user.dublincore.description": meta_comment,
-                                    "user.xdg.referrer.url": f"https://twitch.tv/{parsed_channel}",
-                                })
-                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
-                    logger.warning(f"Fehler beim FFmpeg-Remuxing für {channel}: {e}")
+                _remux_recording(out_dir, channel, cfg)
 
             except Exception as e:  # noqa: BLE001 - Top-Level-Boundary für den gesamten Aufnahme-Zyklus (Streamlink-Start, Monitoring, Remux); jeder Fehler hier darf den Überwachungs-Thread für diesen Kanal nicht dauerhaft beenden
-                # Fängt z.B. Fehler beim Starten von streamlink (Popen) oder
-                # sonstige unerwartete Fehler ab, damit der Überwachungs-Thread
-                # für diesen Kanal nicht dauerhaft stirbt.
                 logger.warning(f"Unerwarteter Fehler bei der Aufnahme für {channel}: {e}")
 
             finally:
