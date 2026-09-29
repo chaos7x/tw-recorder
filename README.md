@@ -238,6 +238,33 @@ Die `.cred`-Datei ist Base64-kodierter Text (kein rohes Binärformat, `cat` ist 
 
 `TWITCH_CREDENTIALS_FILE` funktioniert dabei unabhängig von systemd-creds - der Pfad kann genauso auf eine gewöhnliche Datei irgendwo auf der Platte zeigen, falls eine einzelne KEY=VALUE-Datei statt der `[twitch]`-Sektion in `recorder.conf` bevorzugt wird.
 
+### Alternative: FreeBSD (rc.d)
+
+Für FreeBSD (ab 14.5, wie bei yt-upload und fetchbridge) liegt unter `freebsd/rc.d/tw-recorder` ein rc.d-Skript bei, das Pendant zum systemd-Service aus `debian/`. Ein Paket gibt es dafür nicht, die Einrichtung ist manuell und aktiviert den Dienst bewusst nicht von selbst. Bisher nur gegen die Doku geschrieben, noch nicht auf einem echten FreeBSD-System getestet.
+
+```sh
+# Abhängigkeiten (py311 an die installierte Python-Version anpassen)
+pkg install python3 py311-pip ffmpeg
+cd /pfad/zu/tw-recorder
+pip install --no-deps .
+pip install "streamlink>=8.2.0"
+
+# Dienstuser und gemeinsame Pipeline-Gruppe (wie debian/postinst)
+pw groupshow media-pipeline >/dev/null 2>&1 || pw groupadd media-pipeline
+pw usershow tw-recorder >/dev/null 2>&1 || pw useradd tw-recorder -d /nonexistent -s /usr/sbin/nologin -G media-pipeline
+install -d -o root -g media-pipeline -m 2775 /srv/media-pipeline /srv/media-pipeline/recordings
+install -d /etc/tw-recorder
+
+# rc.d-Skript installieren und aktivieren
+install -m 755 freebsd/rc.d/tw-recorder /usr/local/etc/rc.d/tw-recorder
+sysrc tw_recorder_enable=YES
+service tw-recorder start
+```
+
+Vor dem `service tw-recorder start` wie unter Linux `/etc/tw-recorder/recorder.conf` anlegen (Vorlage: `recorder.conf.example`).
+
+Das Skript startet `tw-recorder -D` über `daemon(8)` (Neustart bei Absturz, Userwechsel inkl. `media-pipeline`-Zusatzgruppe) und leitet die Ausgabe an syslog weiter (Tag `tw-recorder`, landet standardmäßig in `/var/log/messages`). Weitere Einstellungen (`tw_recorder_runas`, `tw_recorder_args`, `tw_recorder_env`) stehen im Kopf des Skripts.
+
 ### Alternative: Standalone .pyz (kein pip nötig)
 
 `./build-pyz.sh` baut aus `src/` ein einziges, selbst-enthaltenes `tw-recorder.pyz` - läuft auf jedem System mit einem nackten `python3`, ganz ohne vorherige `pip install`. `streamlink` bleibt aber eine echte externe Abhängigkeit (eigenständiges CLI-Tool, kein Python-Import) und muss weiterhin separat installiert sein (Version >= 8.2.0, siehe Hinweis oben):

@@ -148,7 +148,7 @@ def _ensure_channel_dir(out_dir) -> None:
     wurden.
     Nur beim tatsächlichen Neuanlegen gesetzt, sonst würde eine bewusste
     Admin-Anpassung bei jedem Recording-Start wieder überschrieben (derselbe
-    Fix wie in postinst.sh für /srv/media-pipeline selbst).
+    Fix wie in debian/postinst.sh für /srv/media-pipeline selbst).
     """
     newly_created = not out_dir.is_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
