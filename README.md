@@ -238,9 +238,20 @@ Die `.cred`-Datei ist Base64-kodierter Text (kein rohes Binärformat, `cat` ist 
 
 `TWITCH_CREDENTIALS_FILE` funktioniert dabei unabhängig von systemd-creds - der Pfad kann genauso auf eine gewöhnliche Datei irgendwo auf der Platte zeigen, falls eine einzelne KEY=VALUE-Datei statt der `[twitch]`-Sektion in `recorder.conf` bevorzugt wird.
 
-### Alternative: FreeBSD (rc.d)
+### Alternative: FreeBSD-Paket (.pkg)
 
-Für FreeBSD (ab 14.5, wie bei yt-upload und fetchbridge) liegt unter `freebsd/rc.d/tw-recorder` ein rc.d-Skript bei, das Pendant zum systemd-Service aus `debian/`. Ein Paket gibt es dafür nicht, die Einrichtung ist manuell und aktiviert den Dienst bewusst nicht von selbst. Bisher nur gegen die Doku geschrieben, noch nicht auf einem echten FreeBSD-System getestet.
+Jedes Release enthält neben den `.deb`-Dateien auch FreeBSD-Pakete, je eines für FreeBSD 14 und 15 (`…-freebsd14.pkg` / `…-freebsd15.pkg`, gebaut von `freebsd/build-pkg.py`). Sie hängen fest an Python 3.11 (`python311`), damit Interpreter und Python-Abhängigkeiten zusammenpassen:
+
+```sh
+pkg install python311 ffmpeg
+pkg add tw-recorder-<version>-freebsd14.pkg
+```
+
+Das Paket legt `/etc/tw-recorder/recorder.conf` aus der Vorlage an (falls noch keine existiert), dazu den Dienstuser, die Gruppe `media-pipeline` und die Verzeichnisse unter `/srv/media-pipeline`, genau wie das Debian-Paket. streamlink ≥ 8.2.0 kommt weiterhin separat per `pip install "streamlink>=8.2.0"`. Der Dienst wird dabei bewusst **nicht** aktiviert, die nötigen `sysrc`/`service`-Befehle zeigt `pkg` nach der Installation an. Noch nicht auf einem echten FreeBSD-System getestet.
+
+### Alternative: FreeBSD manuell (rc.d)
+
+Für FreeBSD (ab 14.5, wie bei yt-upload und fetchbridge) liegt unter `freebsd/rc.d/tw-recorder` ein rc.d-Skript bei, das Pendant zum systemd-Service aus `debian/`. Ohne das fertige Paket geht die Einrichtung auch von Hand und aktiviert den Dienst ebenfalls nicht von selbst. Bisher nur gegen die Doku geschrieben, noch nicht auf einem echten FreeBSD-System getestet.
 
 ```sh
 # Abhängigkeiten (py311 an die installierte Python-Version anpassen)
