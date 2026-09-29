@@ -160,6 +160,14 @@ class TestWriteXattrs:
 
         assert call_count == 1
 
+    def test_skips_silently_on_platforms_without_setxattr(self, recorder, tmp_path, monkeypatch):
+        # FreeBSD/OpenBSD/macOS: os.setxattr existiert gar nicht.
+        target = tmp_path / "recording.mkv"
+        target.write_bytes(b"dummy")
+        monkeypatch.delattr(recorder.os, "setxattr", raising=False)
+
+        recorder._write_xattrs(target, {"user.dublincore.title": "Cool Title"})
+
 
 class TestBuildOutPattern:
     """

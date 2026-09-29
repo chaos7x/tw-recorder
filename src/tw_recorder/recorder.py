@@ -116,6 +116,12 @@ def _write_xattrs(path, attrs: dict[str, str]) -> None:
     Netzwerk-Mounts) - ein OSError dabei ist keine echte Fehlfunktion, wird
     daher nur als Warnung geloggt statt die Aufnahme fehlschlagen zu lassen.
     """
+    # os.setxattr() existiert nur auf Linux - auf FreeBSD/OpenBSD/macOS fehlt
+    # die Funktion komplett (AttributeError statt OSError), was sonst nach
+    # jedem erfolgreichen Remux bis in _remux_recording() durchschlagen würde.
+    if not hasattr(os, "setxattr"):
+        logger.debug("os.setxattr auf dieser Plattform nicht verfügbar - xattrs werden übersprungen.")
+        return
     for name, value in attrs.items():
         try:
             os.setxattr(path, name, value.encode("utf-8"))
