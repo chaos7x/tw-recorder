@@ -107,21 +107,17 @@ services:
       - .env
     volumes:
       - ./config:/etc/tw-recorder:ro
-      # Zeigt in den gemeinsamen /srv/media-pipeline-Baum statt in ein
-      # rein eigenes ./recordings: fetchbridge braucht recordings/ UND
-      # incoming/ als EINEN gemeinsamen Mount (statt zwei getrennte), sonst
-      # scheitert dessen os.rename() zwischen beiden mit EXDEV - selbst wenn
-      # die Host-Verzeichnisse zufällig auf derselben Partition liegen
-      # (siehe fetchbridges docker-compose.yaml.example). Läuft fetchbridge
-      # nicht mit, tut's auch ein rein lokales ./recordings.
-      - /srv/media-pipeline/recordings:/srv/media-pipeline/recordings:rw
+      # Ganzer gemeinsamer /srv/media-pipeline-Baum wie bei yt-upload und
+      # fetchbridge; tw-recorder schreibt davon nur nach recordings/
+      # (STORAGE_DIR-Default).
+      - /srv/media-pipeline:/srv/media-pipeline:rw
 ```
 
 #### 🔗 Interop mit Bare-Metal/anderen Containern (gemeinsamer Host-Pfad)
 
-`user: "11107:11108"` oben ist nur ein Platzhalter. Der Mount oben nutzt bereits denselben Host-Pfad `/srv/media-pipeline/recordings`, den auch die Bare-Metal-/`.deb`-Installationen von `fetchbridge`/`yt-upload` nutzen - Container und Bare-Metal teilen sich den Baum also ohne weitere Anpassung.
+`user: "11107:11108"` oben ist nur ein Platzhalter. Der Mount oben nutzt bereits denselben Host-Pfad `/srv/media-pipeline`, den auch die Bare-Metal-/`.deb`-Installationen von `fetchbridge`/`yt-upload` nutzen - Container und Bare-Metal teilen sich den Baum also ohne weitere Anpassung.
 
-`/srv/media-pipeline/recordings` gehört dort `root:media-pipeline` mit Modus `2775` (setgid, bewusst **ohne** Sticky-Bit) - Schreib-/Löschrecht hängt also rein an der **Gruppe**, nicht an der UID oder dem Datei-Owner. Die GID im `user:`-Feld muss deshalb mit der echten Host-Gruppe übereinstimmen, sonst gibt's `Permission denied`:
+`/srv/media-pipeline` und seine Unterordner gehören dort `root:media-pipeline` mit Modus `2775` (setgid, bewusst **ohne** Sticky-Bit) - Schreib-/Löschrecht hängt also rein an der **Gruppe**, nicht an der UID oder dem Datei-Owner. Die GID im `user:`-Feld muss deshalb mit der echten Host-Gruppe übereinstimmen, sonst gibt's `Permission denied`:
 
 ```bash
 getent group media-pipeline   # z.B. media-pipeline:x:998:

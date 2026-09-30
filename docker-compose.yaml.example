@@ -15,7 +15,7 @@ services:
     #  - app:/app:ro
     #  - log:/log
       - config:/etc/tw-recorder:ro
-      - storage-all:/srv/media-pipeline/recordings
+      - storage-all:/srv/media-pipeline
 
 # ==========================================
 # Healthcheck (optional), ist aktiviert
@@ -57,20 +57,19 @@ volumes:
       o: bind
       device: ./log
 
-  # Zeigt bewusst in den gemeinsamen /srv/media-pipeline-Baum statt in
-  # ein rein eigenes ./recordings - fetchbridge und yt-upload binden denselben
-  # Host-Pfad ein (siehe deren jeweilige docker-compose.yaml.example), damit
-  # fetchbridge zwischen recordings/ und incoming/ atomar per os.rename()
-  # verschieben kann: getrennte Bind-Mounts scheitern dabei mit EXDEV, selbst
-  # wenn die Host-Verzeichnisse zufällig auf derselben Partition liegen (der
-  # Kernel prüft bei rename() auf dieselbe Mount-Instanz, nicht nur auf
-  # denselben st_dev).
+  # Bindet wie yt-upload und fetchbridge den ganzen gemeinsamen
+  # /srv/media-pipeline-Baum ein (siehe deren jeweilige
+  # docker-compose.yaml.example). tw-recorder selbst schreibt nur nach
+  # recordings/ (STORAGE_DIR-Default, keine ENV-Umbiegung nötig) und legt den
+  # Ordner beim ersten Start bei Bedarf selbst an. fetchbridge braucht
+  # recordings/ und incoming/ dagegen zwingend als EINEN Mount, sonst
+  # scheitert dessen os.rename() zwischen beiden mit EXDEV.
   storage-all:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: /srv/media-pipeline/recordings
+      device: /srv/media-pipeline
 
   # --- Vorbereitung für spätere NFS-Mounts ---
   # storage-all:
@@ -78,4 +77,4 @@ volumes:
   #   driver_opts:
   #     type: nfs
   #     o: addr=192.168.1.100,rw,nolock,hard,nfsvers=4
-  #     device: ":/volume1/media-pipeline/recordings"
+  #     device: ":/volume1/media-pipeline"
