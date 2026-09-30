@@ -57,7 +57,7 @@ volumes:
       o: bind
       device: ./log
 
-  # Zeigt bewusst in den gemeinsamen /opt/docker/media-pipeline-Baum statt in
+  # Zeigt bewusst in den gemeinsamen /srv/media-pipeline-Baum statt in
   # ein rein eigenes ./recordings - fetchbridge und yt-upload binden denselben
   # Host-Pfad ein (siehe deren jeweilige docker-compose.yaml.example), damit
   # fetchbridge zwischen recordings/ und incoming/ atomar per os.rename()
@@ -70,7 +70,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /opt/docker/media-pipeline/recordings
+      device: /srv/media-pipeline/recordings
 
   # --- Vorbereitung für spätere NFS-Mounts ---
   # storage-all:
