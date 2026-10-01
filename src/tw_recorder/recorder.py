@@ -305,6 +305,9 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             # Eigenes Tag nur mit echter Startzeit: yt-upload liest ausschließlich
             # dieses (nicht creation_time, das auch aus fremden Quellen stammen kann).
             *(["-metadata", f"RECORDING_START={meta_creation_time}"] if start_utc else []),
+            # Start-Timecode (lokale Zeit wie im Dateinamen, Frames immer 00) - wird
+            # z.B. bei "ffmpeg -i x.mkv -c copy x.mov" zur tmcd-Timecode-Spur.
+            *(["-timecode", f"{time_str.replace('-', ':')}:00:00"] if start_utc else []),
             "-map", "0:v",
             "-map", "0:a?",
             "-c", "copy",
