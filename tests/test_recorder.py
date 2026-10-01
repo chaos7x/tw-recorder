@@ -311,6 +311,9 @@ class TestRemuxRecording:
 
             assert "creation_time=2026-09-23T18:00:00Z" in calls[0]
             assert "RECORDING_START=2026-09-23T18:00:00Z" in calls[0]
+            # Timecode bleibt lokale Zeit (wie Dateiname), nicht UTC
+            tc_idx = calls[0].index("-timecode")
+            assert calls[0][tc_idx + 1] == "20:00:00:00"
             assert "DATE=20260923" in calls[0]
         finally:
             monkeypatch.undo()
