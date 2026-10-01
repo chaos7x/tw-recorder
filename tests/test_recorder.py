@@ -266,6 +266,23 @@ class TestEnsureChannelDir:
         assert "2775" in caplog.text
 
 
+class TestMakeGroupWritable:
+    def test_sets_0664_regardless_of_umask(self, recorder, tmp_path):
+        """ffmpeg legt die .mkv mit Umask 022 als 0644 an - die media-pipeline-Gruppe braucht g+w."""
+        old_umask = os.umask(0o022)
+        try:
+            f = tmp_path / "rec.mkv"
+            f.write_bytes(b"data")
+            assert stat.S_IMODE(f.stat().st_mode) == 0o644
+            recorder._make_group_writable(f)
+        finally:
+            os.umask(old_umask)
+        assert stat.S_IMODE(f.stat().st_mode) == 0o664
+
+    def test_missing_file_only_logs(self, recorder, tmp_path):
+        recorder._make_group_writable(tmp_path / "missing.mkv")
+
+
 class TestSanitizePathComponent:
     def test_replaces_path_special_chars_and_collapses_whitespace(self, recorder):
         assert recorder._sanitize_path_component('Just  Chatting/IRL: "x"', "Fallback") == "Just_Chatting_IRL_x"
@@ -309,6 +326,30 @@ class TestRemuxRecording:
         assert calls[0][-1] == str(tmp_path / "2026-09-23_chan_Just_Chatting_Hello_♥.mkv")
         assert "TITLE=chan - Just_Chatting: Hello ♥ (2026-09-23)" in calls[0]
         assert not ts_file.exists()
+
+    def test_remuxed_file_is_group_writable(self, recorder, tmp_path, monkeypatch):
+        ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
+        ts_file.write_bytes(b"data")
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(cmd, check):
+            # wie ffmpeg: Ausgabe mit Umask-maskiertem Standard-Mode anlegen
+            old_umask = os.umask(0o022)
+            try:
+                open(cmd[-1], "wb").close()
+            finally:
+                os.umask(old_umask)
+            return FakeCompleted()
+
+        monkeypatch.setattr(recorder.subprocess, "run", fake_run)
+        monkeypatch.setattr(recorder, "_write_xattrs", lambda path, attrs: None)
+
+        recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+        mkv = tmp_path / "2026-09-23_chan_Gaming_Title.mkv"
+        assert stat.S_IMODE(mkv.stat().st_mode) == 0o664
 
     def test_creation_time_is_local_start_time_in_utc(self, recorder, tmp_path, monkeypatch):
         """Streamlinks {time} ist lokale Zeit - creation_time muss die echte UTC-Startzeit sein."""
