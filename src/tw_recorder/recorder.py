@@ -302,6 +302,9 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             "-metadata", f"PURL=https://twitch.tv/{parsed_channel}",
             "-metadata", f"DATE={meta_date_compact}",
             "-metadata", f"creation_time={meta_creation_time}",
+            # Eigenes Tag nur mit echter Startzeit: yt-upload liest ausschließlich
+            # dieses (nicht creation_time, das auch aus fremden Quellen stammen kann).
+            *(["-metadata", f"RECORDING_START={meta_creation_time}"] if start_utc else []),
             "-map", "0:v",
             "-map", "0:a?",
             "-c", "copy",

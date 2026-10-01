@@ -310,6 +310,7 @@ class TestRemuxRecording:
             recorder._remux_recording(tmp_path, "chan", self._cfg())
 
             assert "creation_time=2026-09-23T18:00:00Z" in calls[0]
+            assert "RECORDING_START=2026-09-23T18:00:00Z" in calls[0]
             assert "DATE=20260923" in calls[0]
         finally:
             monkeypatch.undo()
