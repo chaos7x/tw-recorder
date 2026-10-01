@@ -14,7 +14,7 @@ Eine Übersicht der internen Architektur (Module, Datenfluss, Diagramm) findet s
 
 * **Automatische Stream-Erkennung:** Prüft effizient über die Twitch Helix API (oder Streamlink Fallback), ob definierte Kanäle live sind.
 * **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`.
-* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal), Aufnahmedatum und die sekundengenaue Startzeit der Aufnahme (`creation_time`, in der MKV als `DateUTC`, korrekt nach UTC umgerechnet aus der lokalen `TZ`; zusätzlich als eigenes Tag `RECORDING_START`, das `yt-upload` als Aufnahmedatum und Beschreibungszeile übernimmt) sowie einen Start-Timecode (`TIMECODE`, lokale Zeit `HH:MM:SS:00`, der bei `ffmpeg -i aufnahme.mkv -c copy aufnahme.mov` zur Timecode-Spur wird) direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen). Zusätzlich werden dieselben Extended Attributes (`user.dublincore.*`, `user.xdg.referrer.url`) gesetzt, die auch `yt-dlp --xattrs` schreibt - Dateimanager & Tools behandeln Aufnahmen und yt-dlp-Downloads damit einheitlich (nur auf Dateisystemen mit xattr-Unterstützung, z.B. ext4/xfs/btrfs; auf FAT/exFAT o.ä. wird das übersprungen, kein Fehler).
+* **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal), Aufnahmedatum und die sekundengenaue Startzeit der Aufnahme (`creation_time`, in der MKV als `DateUTC`, korrekt nach UTC umgerechnet aus der lokalen `TZ`; zusätzlich als eigenes Tag `RECORDING_START`, das `yt-upload` als Aufnahmedatum und Beschreibungszeile übernimmt) sowie einen Start-Timecode (`TIMECODE`, lokale Zeit `HH:MM:SS:00`, der bei `ffmpeg -i aufnahme.mkv -c copy aufnahme.mov` oder mit `.mov` als Endung in `filename_pattern` direkt zur Timecode-Spur wird) direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen). Zusätzlich werden dieselben Extended Attributes (`user.dublincore.*`, `user.xdg.referrer.url`) gesetzt, die auch `yt-dlp --xattrs` schreibt - Dateimanager & Tools behandeln Aufnahmen und yt-dlp-Downloads damit einheitlich (nur auf Dateisystemen mit xattr-Unterstützung, z.B. ext4/xfs/btrfs; auf FAT/exFAT o.ä. wird das übersprungen, kein Fehler).
 * **Titel-/Kategorie-Split:** Erkennt Änderungen am Stream-Titel oder der Kategorie während einer laufenden Aufnahme und beendet/startet die Aufzeichnung automatisch neu (optional, `split_on_title_change`).
 * **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart.
 * **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird.
@@ -42,6 +42,9 @@ sleep_interval = 15
 
 # Dateinamensmuster für die finalen Aufnahmen (.mkv wird automatisch ergänzt)
 # Verfügbare Variablen: {time}, {channel}, {author}, {category}, {title}
+# Die Endung bestimmt den Container: .mkv (Standard) oder .mov/.mp4 - bei .mov
+# wird der Start-Timecode direkt zur Timecode-Spur (tmcd), alle Tags inkl.
+# RECORDING_START für yt-upload bleiben erhalten.
 filename_pattern = {time:%Y-%m-%d_%H-%M}_{channel}_{title}
 
 [twitch]

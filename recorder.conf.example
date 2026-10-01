@@ -9,7 +9,9 @@
 # Prüf-Intervall in Sekunden zwischen den Abfragen
 # sleep_interval = 15
 
-# Dateinamensmuster für die finalen Aufnahmen
+# Dateinamensmuster für die finalen Aufnahmen. Die Endung bestimmt den
+# Container: .mkv (Standard, ohne Endung wird .mkv ergänzt) oder .mov/.mp4 -
+# bei .mov wird der Start-Timecode direkt zur Timecode-Spur (tmcd).
 # filename_pattern = {time:%Y-%m-%d_%H-%M}_{channel}_{title}.mkv
 
 

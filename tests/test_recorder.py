@@ -359,6 +359,21 @@ class TestRemuxRecording:
             monkeypatch.undo()
             time.tzset()
 
+    @pytest.mark.parametrize(("pattern", "expect_flag"), [("{title}.mov", True), ("{title}.MP4", True), ("{title}.mkv", False)])
+    def test_movflags_only_for_mov_targets(self, recorder, tmp_path, monkeypatch, pattern, expect_flag):
+        (tmp_path / "2026-09-23_20-00-00_chan_[Gaming]_Title.ts").write_bytes(b"data")
+        calls = []
+
+        class FakeCompleted:
+            returncode = 0
+
+        monkeypatch.setattr(recorder.subprocess, "run", lambda cmd, check: calls.append(cmd) or FakeCompleted())
+        monkeypatch.setattr(recorder, "_write_xattrs", lambda path, attrs: None)
+
+        recorder._remux_recording(tmp_path, "chan", {"filename_pattern": pattern, "use_ionice": False})
+
+        assert ("use_metadata_tags" in calls[0]) is expect_flag
+
     def test_failed_ffmpeg_keeps_ts_file(self, recorder, tmp_path, monkeypatch):
         ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
         ts_file.write_bytes(b"data")
