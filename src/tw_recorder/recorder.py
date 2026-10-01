@@ -25,6 +25,9 @@ from tw_recorder.twitch_api import check_stream_online, get_stream_info
 
 logger = logging.getLogger(__name__)
 
+# Zielendungen (filename_pattern), für die ffmpeg den MOV/MP4-Muxer nutzt
+MOV_SUFFIXES = {".mov", ".mp4", ".m4v"}
+
 
 def _pump_subprocess_output(proc: subprocess.Popen, channel: str) -> None:
     """
@@ -327,6 +330,8 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             "-map", "0:v",
             "-map", "0:a?",
             "-c", "copy",
+            # MOV/MP4 verwerfen sonst eigene Tags wie RECORDING_START und PURL
+            *(["-movflags", "use_metadata_tags"] if final_target_path.suffix.lower() in MOV_SUFFIXES else []),
             str(final_target_path)
         ]
 
