@@ -13,6 +13,7 @@ fälschlich im Titel. Die Kategorie wird jetzt in eckigen Klammern kodiert
 
 import os
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -290,6 +291,30 @@ class TestRemuxRecording:
         assert calls[0][-1] == str(tmp_path / "2026-09-23_chan_Just_Chatting_Hello_♥.mkv")
         assert "TITLE=chan - Just_Chatting: Hello ♥ (2026-09-23)" in calls[0]
         assert not ts_file.exists()
+
+    def test_creation_time_is_local_start_time_in_utc(self, recorder, tmp_path, monkeypatch):
+        """Streamlinks {time} ist lokale Zeit - creation_time muss die echte UTC-Startzeit sein."""
+        monkeypatch.setenv("TZ", "Europe/Berlin")
+        time.tzset()
+        try:
+            ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
+            ts_file.write_bytes(b"data")
+            calls = []
+
+            class FakeCompleted:
+                returncode = 0
+
+            monkeypatch.setattr(recorder.subprocess, "run", lambda cmd, check: calls.append(cmd) or FakeCompleted())
+            monkeypatch.setattr(recorder, "_write_xattrs", lambda path, attrs: None)
+
+            recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+            assert "creation_time=2026-09-23T18:00:00Z" in calls[0]
+            assert "RECORDING_START=2026-09-23T18:00:00Z" in calls[0]
+            assert "DATE=20260923" in calls[0]
+        finally:
+            monkeypatch.undo()
+            time.tzset()
 
     def test_failed_ffmpeg_keeps_ts_file(self, recorder, tmp_path, monkeypatch):
         ts_file = tmp_path / "2026-09-23_20-00_chan_[Gaming]_Title.ts"
