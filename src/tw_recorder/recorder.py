@@ -170,9 +170,11 @@ def _build_out_pattern(out_dir, channel: str) -> str:
     "2026-09-23_20-00__[]_.ts", siehe _parse_recorded_filename()).
     Category/Titel bleiben bewusst Streamlink-Platzhalter (in eckigen
     Klammern um die Kategorie, siehe _parse_recorded_filename()), da diese
-    Werte lokal nicht bekannt sind.
+    Werte lokal nicht bekannt sind. Uhrzeit sekundengenau (%H-%M-%S) für
+    Start-Timecode und RECORDING_START; _remux_recording() liest auch noch
+    ältere .ts-Dateien im minutengenauen Format.
     """
-    return str(out_dir / f"{{time:%Y-%m-%d_%H-%M}}_{channel}_[{{category}}]_{{title}}.ts")
+    return str(out_dir / f"{{time:%Y-%m-%d_%H-%M-%S}}_{channel}_[{{category}}]_{{title}}.ts")
 
 
 def _stop_process(proc: subprocess.Popen, timeout: float) -> None:
@@ -197,6 +199,20 @@ def _sanitize_path_component(text: str, fallback: str) -> str:
     text = re.sub(r'[/\\:*?"<>|]', '_', text)
     text = re.sub(r'[\s_]+', '_', text).strip('_')
     return text or fallback
+
+
+def _parse_start_time(date_str: str, time_str: str) -> datetime | None:
+    """
+    Startzeit aus Datum/Uhrzeit des .ts-Namens: sekundengenau (HH-MM-SS) oder,
+    bei älteren Dateien, minutengenau (HH-MM). Ziffern sind lokale Zeit, werden
+    aber (wie bisher für filename_pattern) als UTC-markiertes datetime geliefert.
+    """
+    for fmt in ("%Y-%m-%d_%H-%M-%S", "%Y-%m-%d_%H-%M"):
+        try:
+            return datetime.strptime(f"{date_str}_{time_str}", fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return None
 
 
 def _build_meta_title(channel: str, category: str, full_title: str, date_str: str) -> str:
@@ -260,12 +276,12 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
         safe_title = _sanitize_path_component(safe_title, "Untitled")
 
         # Datum als datetime-Objekt, damit filename_pattern {time:...}-Formate nutzen kann
-        try:
-            dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=UTC)
+        dt_obj = _parse_start_time(date_str, time_str)
+        if dt_obj:
             # Streamlinks {time} ist die lokale Zeit des Prozesses (TZ), nicht UTC -
             # für creation_time daher als lokale Zeit interpretieren und nach UTC umrechnen.
             start_utc = dt_obj.replace(tzinfo=None).astimezone(UTC)
-        except ValueError:
+        else:
             dt_obj = datetime.now(UTC)
             start_utc = None
 
@@ -307,7 +323,7 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             *(["-metadata", f"RECORDING_START={meta_creation_time}"] if start_utc else []),
             # Start-Timecode (lokale Zeit wie im Dateinamen, Frames immer 00) - wird
             # z.B. bei "ffmpeg -i x.mkv -c copy x.mov" zur tmcd-Timecode-Spur.
-            *(["-timecode", f"{time_str.replace('-', ':')}:00:00"] if start_utc else []),
+            *(["-timecode", f"{dt_obj:%H:%M:%S}:00"] if start_utc else []),
             "-map", "0:v",
             "-map", "0:a?",
             "-c", "copy",
