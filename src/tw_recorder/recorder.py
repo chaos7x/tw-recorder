@@ -262,8 +262,12 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
         # Datum als datetime-Objekt, damit filename_pattern {time:...}-Formate nutzen kann
         try:
             dt_obj = datetime.strptime(f"{date_str}_{time_str}", "%Y-%m-%d_%H-%M").replace(tzinfo=UTC)
+            # Streamlinks {time} ist die lokale Zeit des Prozesses (TZ), nicht UTC -
+            # für creation_time daher als lokale Zeit interpretieren und nach UTC umrechnen.
+            start_utc = dt_obj.replace(tzinfo=None).astimezone(UTC)
         except ValueError:
             dt_obj = datetime.now(UTC)
+            start_utc = None
 
         try:
             target_filename = cfg["filename_pattern"].format(
@@ -283,6 +287,9 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             final_target_path = final_target_path.with_suffix(".mkv")
 
         meta_date_compact = date_str.replace("-", "") if date_str else "00000000"
+        # Aufnahmestart mit Uhrzeit (wird in MKV zu DateUTC; yt-upload liest es als
+        # Startzeit), ohne parsebaren Dateinamen bleibt es beim reinen Datum.
+        meta_creation_time = start_utc.strftime("%Y-%m-%dT%H:%M:%SZ") if start_utc else meta_date_compact
         meta_title = _build_meta_title(parsed_channel, category, full_title, date_str)
         meta_comment = full_title
 
@@ -294,7 +301,7 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             "-metadata", f"ARTIST={parsed_channel}",
             "-metadata", f"PURL=https://twitch.tv/{parsed_channel}",
             "-metadata", f"DATE={meta_date_compact}",
-            "-metadata", f"creation_time={meta_date_compact}",
+            "-metadata", f"creation_time={meta_creation_time}",
             "-map", "0:v",
             "-map", "0:a?",
             "-c", "copy",
