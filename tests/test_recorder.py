@@ -14,12 +14,30 @@ fälschlich im Titel. Die Kategorie wird jetzt in eckigen Klammern kodiert
 import os
 import stat
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 
+class TestParseStartTime:
+    def test_seconds_format(self, recorder):
+        assert recorder._parse_start_time("2026-09-23", "20-15-42") == datetime(2026, 9, 23, 20, 15, 42, tzinfo=UTC)
+
+    def test_old_minute_format(self, recorder):
+        assert recorder._parse_start_time("2026-09-23", "20-15") == datetime(2026, 9, 23, 20, 15, tzinfo=UTC)
+
+    def test_invalid_returns_none(self, recorder):
+        assert recorder._parse_start_time("0000-00-00", "00-00") is None
+
+
 class TestParseRecordedFilename:
+    def test_seconds_in_time_are_kept(self, recorder):
+        date_str, time_str, *_ = recorder._parse_recorded_filename(
+            "2026-09-17_14-30-05_somechannel_[Gaming]_Title", "somechannel"
+        )
+        assert (date_str, time_str) == ("2026-09-17", "14-30-05")
+
     def test_multi_word_category_with_underscore_is_not_split(self, recorder):
         full_stem = "2026-09-17_14-30_somechannel_[Just_Chatting]_Some_Cool_Title"
 
@@ -193,7 +211,7 @@ class TestBuildOutPattern:
 
         assert "[{category}]" in out_pattern
         assert "{title}" in out_pattern
-        assert "{time:%Y-%m-%d_%H-%M}" in out_pattern
+        assert "{time:%Y-%m-%d_%H-%M-%S}" in out_pattern
 
     def test_channel_name_containing_underscore_is_preserved(self, recorder, tmp_path):
         out_pattern = recorder._build_out_pattern(tmp_path, "some_channel")
@@ -315,6 +333,28 @@ class TestRemuxRecording:
             tc_idx = calls[0].index("-timecode")
             assert calls[0][tc_idx + 1] == "20:00:00:00"
             assert "DATE=20260923" in calls[0]
+        finally:
+            monkeypatch.undo()
+            time.tzset()
+
+    def test_seconds_precise_start_time(self, recorder, tmp_path, monkeypatch):
+        monkeypatch.setenv("TZ", "Europe/Berlin")
+        time.tzset()
+        try:
+            ts_file = tmp_path / "2026-09-23_20-00-37_chan_[Gaming]_Title.ts"
+            ts_file.write_bytes(b"data")
+            calls = []
+
+            class FakeCompleted:
+                returncode = 0
+
+            monkeypatch.setattr(recorder.subprocess, "run", lambda cmd, check: calls.append(cmd) or FakeCompleted())
+            monkeypatch.setattr(recorder, "_write_xattrs", lambda path, attrs: None)
+
+            recorder._remux_recording(tmp_path, "chan", self._cfg())
+
+            assert "RECORDING_START=2026-09-23T18:00:37Z" in calls[0]
+            assert calls[0][calls[0].index("-timecode") + 1] == "20:00:37:00"
         finally:
             monkeypatch.undo()
             time.tzset()
