@@ -162,6 +162,21 @@ def _ensure_channel_dir(out_dir) -> None:
             logger.warning(f"Konnte Rechte von {out_dir} nicht auf 2775 setzen: {e}")
 
 
+def _make_group_writable(path) -> None:
+    """
+    Setzt die fertige Aufnahme explizit auf 0664 (tw-recorder:media-pipeline,
+    Gruppe per Setgid vom Kanal-Verzeichnis geerbt). ffmpeg legt die Datei
+    sonst mit dem Prozess-Umask an (0666 & ~022 = 0644 unter systemd/rc.d/
+    Docker), womit die übrigen Mitglieder der media-pipeline-Gruppe
+    (yt-upload, fetchbridge, Admins) die Datei nur lesen, aber nicht ändern
+    könnten - inkonsistent zu den 2775-Verzeichnissen (_ensure_channel_dir()).
+    """
+    try:
+        path.chmod(0o664)
+    except OSError as e:
+        logger.warning(f"Konnte Rechte von {path.name} nicht auf 664 setzen: {e}")
+
+
 def _build_out_pattern(out_dir, channel: str) -> str:
     """
     Baut das Streamlink-Ausgabepattern für die rohe .ts-Aufnahme. Kanalname
@@ -345,6 +360,7 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
             if latest_file.exists():
                 latest_file.unlink()
             logger.info(f"✅ Erfolgreich remuxed: {final_target_path.name}")
+            _make_group_writable(final_target_path)
             _write_xattrs(final_target_path, {
                 "user.dublincore.title": meta_title,
                 "user.dublincore.contributor": parsed_channel,
