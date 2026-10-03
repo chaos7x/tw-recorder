@@ -17,6 +17,14 @@ if [ -f "$conf" ] && [ "$(stat -c '%U:%G %a' "$conf")" = "root:root 644" ]; then
     chown root:tw-recorder "$conf"
     chmod 0640 "$conf"
 fi
+# Dasselbe fuer conf.d/: dort angelegte *.conf koennen ebenfalls Secrets
+# enthalten. root:tw-recorder 0750 sperrt alle anderen schon am Verzeichnis
+# aus, auch wenn eine einzelne Datei darin versehentlich 0644 hat.
+confd=/etc/tw-recorder/conf.d
+if [ -d "$confd" ] && [ "$(stat -c '%U:%G %a' "$confd")" = "root:root 755" ]; then
+    chown root:tw-recorder "$confd"
+    chmod 0750 "$confd"
+fi
 
 # Gemeinsame Gruppe fuer die Uebergabeverzeichnisse der Pipeline
 # (tw-recorder -> fetchbridge -> yt-upload). Jedes der drei .deb-Pakete legt
