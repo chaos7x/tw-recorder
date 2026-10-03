@@ -164,15 +164,18 @@ Das Paket legt einen dedizierten Systemuser (`tw-recorder`) an und startet den D
 systemctl enable --now tw-recorder
 ```
 
-**Devuan / Debian ohne systemd (`sysvinit-core`):** Das Paket bringt zusätzlich ein klassisches `/etc/init.d/tw-recorder`-Skript mit, das `postinst` automatisch anstelle des systemd-Service registriert, wenn kein systemd läuft:
+**Devuan / Debian ohne systemd (`sysvinit-core`, OpenRC):** Das Paket bringt zusätzlich ein klassisches `/etc/init.d/tw-recorder`-Skript mit, das `postinst` automatisch anstelle des systemd-Service registriert, wenn kein systemd läuft - ebenfalls deaktiviert (`update-rc.d … defaults-disabled`, kein Start beim Booten). Die mitgelieferte `.service`-Datei unter `/usr/lib/systemd/system/` bleibt dort einfach ungenutzt liegen, wie bei Debian-Paketen üblich. Aktivieren und starten:
 
 ```bash
+update-rc.d tw-recorder enable
 service tw-recorder start
 ```
 
 ### 🔒 Optional: Twitch-Credentials mit systemd-creds verschlüsseln (nur Dämon/.deb-Paket)
 
 `client_secret`/`user_token` landen sonst im Klartext in `recorder.conf`/`conf.d/*.conf`. Das .deb- bzw. FreeBSD-Paket legt `recorder.conf` deshalb als `root:tw-recorder` mit `0640` an (nur root und der Dienst können sie lesen, der Dienst braucht kein Schreibrecht), das Verzeichnis `conf.d/` als `root:tw-recorder` mit `0750`; eigene `conf.d/*.conf` mit Secrets sollten ebenfalls `0640` bekommen. `check_secrets_permissions()` warnt zwar, wenn eine solche Datei für Andere oder eine fremde Gruppe lesbar ist, verhindert aber nicht, dass die Secrets überhaupt im Klartext auf der Platte liegen. Mit `LoadCredentialEncrypted=` (systemd >= 250) lässt sich das vermeiden.
+
+**Ohne systemd (Devuan, sysvinit/OpenRC)** gibt es kein `systemd-creds` und damit auch keine TPM-gebundene Verschlüsselung. Dort bleiben die Secrets in `recorder.conf` bzw. `conf.d/*.conf`, geschützt durch die oben genannten Rechte (`0640`/`0750`) - für andere lokale User nicht lesbar, für root aber im Klartext.
 
 Analog zu yt-uploads `CREDENTIALS_FILE`: `client_id`/`client_secret`/`user_token` lassen sich optional aus einer KEY=VALUE-Datei nachladen, deren Pfad in `TWITCH_CREDENTIALS_FILE` steht (`config._load_twitch_credentials_file()`) - ein einzelner, frei konfigurierbarer Pfad statt einer `$CREDENTIALS_DIRECTORY`-spezifischen Sonderlogik. `tw-recorder` weiß dabei nichts von systemd-Credentials, es liest einfach "die Datei, deren Pfad in `TWITCH_CREDENTIALS_FILE` steht".
 
