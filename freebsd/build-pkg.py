@@ -57,7 +57,7 @@ pw groupshow media-pipeline >/dev/null 2>&1 || pw groupadd media-pipeline
 if ! pw usershow tw-recorder >/dev/null 2>&1; then
     pw useradd tw-recorder -c "tw-recorder daemon" -d /nonexistent -s /usr/sbin/nologin -G media-pipeline
 fi
-mkdir -p /etc/tw-recorder/conf.d
+[ -d /etc/tw-recorder/conf.d ] || install -d -o root -g tw-recorder -m 0750 /etc/tw-recorder/conf.d
 if [ ! -e /etc/tw-recorder/recorder.conf ]; then
     install -o root -g tw-recorder -m 0640 {examples}/recorder.conf.example /etc/tw-recorder/recorder.conf
 fi
