@@ -7,6 +7,17 @@ if ! getent passwd tw-recorder >/dev/null 2>&1; then
         --shell /usr/sbin/nologin tw-recorder
 fi
 
+# recorder.conf kann Twitch-Zugangsdaten (client_secret/user_token) im
+# Klartext enthalten, dpkg legt sie aber als root:root 0644 an (fuer jeden
+# lesbar). Der Dienst muss sie nur lesen, nie schreiben: root:tw-recorder 0640.
+# Nur angepasst, solange die Datei noch genau im Paket-Standard steht - eigene
+# Rechte des Admins bleiben bei einem Upgrade unangetastet.
+conf=/etc/tw-recorder/recorder.conf
+if [ -f "$conf" ] && [ "$(stat -c '%U:%G %a' "$conf")" = "root:root 644" ]; then
+    chown root:tw-recorder "$conf"
+    chmod 0640 "$conf"
+fi
+
 # Gemeinsame Gruppe fuer die Uebergabeverzeichnisse der Pipeline
 # (tw-recorder -> fetchbridge -> yt-upload). Jedes der drei .deb-Pakete legt
 # Gruppe und Verzeichnisse unabhaengig und idempotent an, da die Installationsreihenfolge

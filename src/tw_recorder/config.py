@@ -230,7 +230,8 @@ def load_config():
 def check_secrets_permissions():
     """
     Warnt, falls recorder.conf/conf.d Twitch-Credentials (client_secret/
-    user_token) im Klartext enthält, aber für Gruppe/Andere lesbar ist.
+    user_token) im Klartext enthält, aber für Andere oder eine fremde Gruppe
+    lesbar ist (die eigene Dienstgruppe des Prozesses ist erlaubt).
 
     Prüft dazu bewusst über config_obj.has_option(), ob client_secret/
     user_token TATSÄCHLICH in einer Config-DATEI stehen - nicht nur, ob der
@@ -265,14 +266,21 @@ def check_secrets_permissions():
 
     for f in config_files:
         try:
-            mode = f.stat().st_mode
+            st = f.stat()
         except OSError:
             continue
-        if mode & (stat.S_IRGRP | stat.S_IROTH):
+        mode = st.st_mode
+        # Gruppen-Leserecht ist nur dann unbedenklich, wenn die Gruppe die
+        # eigene Dienstgruppe ist (Paket-Standard root:tw-recorder 0640, siehe
+        # debian/postinst.sh bzw. freebsd/build-pkg.py) - dann kann außer root
+        # und dem Dienst selbst niemand die Datei lesen.
+        group_readable = mode & stat.S_IRGRP and st.st_gid != os.getegid()
+        if group_readable or mode & stat.S_IROTH:
             logger.warning(
                 f"⚠️ {f} enthält Twitch-Zugangsdaten (client_secret/user_token) im Klartext "
                 f"und ist für Gruppe/Andere lesbar (Modus {oct(stat.S_IMODE(mode))}). "
-                "Empfehlung: auf dem Host `chmod 600` setzen, sofern der Mount das zulässt."
+                "Empfehlung: `chown root:tw-recorder` + `chmod 640` (Bare-Metal) bzw. "
+                "auf dem Host `chmod 600`, sofern der Mount das zulässt."
             )
 
 
