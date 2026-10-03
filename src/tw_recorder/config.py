@@ -46,6 +46,28 @@ HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "t
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
 
 
+_conf_d_warned = False
+
+
+def _conf_d_files() -> list[Path]:
+    """
+    Sortierte *.conf aus CONF_D_DIR. Ist das Verzeichnis zwar vorhanden, aber
+    für den aufrufenden User nicht lesbar (Paket-Standard root:<dienst> 0750,
+    z.B. bei einem manuellen Aufruf als normaler User), liefert glob()
+    stillschweigend eine leere Liste - deshalb hier einmal pro Prozess eine
+    Warnung, statt conf.d unbemerkt zu ignorieren.
+    """
+    global _conf_d_warned
+    if not CONF_D_DIR.is_dir():
+        return []
+    if not os.access(CONF_D_DIR, os.R_OK | os.X_OK):
+        if not _conf_d_warned:
+            logger.warning(f"{CONF_D_DIR} ist für diesen User nicht lesbar und wird übersprungen.")
+            _conf_d_warned = True
+        return []
+    return sorted(CONF_D_DIR.glob("*.conf"))
+
+
 def _load_twitch_credentials_file() -> dict:
     """
     Liest optional eine KEY=VALUE-Datei mit Twitch-Credentials aus dem in
@@ -97,8 +119,7 @@ def get_config_files_state() -> dict:
 
     if CONFIG_FILE.is_file():
         config_files.append(CONFIG_FILE)
-    if CONF_D_DIR.is_dir():
-        config_files.extend(sorted(CONF_D_DIR.glob("*.conf")))
+    config_files.extend(_conf_d_files())
 
     for f in config_files:
         with contextlib.suppress(OSError):
@@ -135,9 +156,7 @@ def load_config():
         config_files.append(CONFIG_FILE)
 
     # conf.d-Verzeichnis scannen (alphabetisch sortiert)
-    if CONF_D_DIR.is_dir():
-        conf_d_files = sorted(CONF_D_DIR.glob("*.conf"))
-        config_files.extend(conf_d_files)
+    config_files.extend(_conf_d_files())
 
     # 2. Dateien einzeln einlesen (spätere Dateien überschreiben frühere Werte).
     # Bewusst NICHT config.read(config_files, ...) mit der ganzen Liste auf
@@ -261,8 +280,7 @@ def check_secrets_permissions():
     config_files = []
     if CONFIG_FILE.is_file():
         config_files.append(CONFIG_FILE)
-    if CONF_D_DIR.is_dir():
-        config_files.extend(sorted(CONF_D_DIR.glob("*.conf")))
+    config_files.extend(_conf_d_files())
 
     for f in config_files:
         try:
