@@ -314,6 +314,39 @@ class TestCheckSecretsPermissions:
 
         monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
         monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+        # Datei gehoert einer fremden Gruppe, nicht der des Prozesses
+        monkeypatch.setattr(config.os, "getegid", lambda: main_conf.stat().st_gid + 1)
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert any("lesbar" in r.message for r in caplog.records)
+
+    def test_no_warning_when_group_readable_by_own_service_group(self, config, tmp_path, monkeypatch, caplog):
+        """Paket-Standard root:tw-recorder 0640: nur root und der Dienst selbst koennen lesen."""
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[twitch]\nclient_secret = supersecret\n")
+        main_conf.chmod(0o640)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+        monkeypatch.setattr(config.os, "getegid", lambda: main_conf.stat().st_gid)
+
+        with caplog.at_level("WARNING"):
+            config.check_secrets_permissions()
+
+        assert caplog.records == []
+
+    def test_warns_when_world_readable_even_with_own_group(self, config, tmp_path, monkeypatch, caplog):
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        main_conf = _write_main_config(tmp_path, "[twitch]\nclient_secret = supersecret\n")
+        main_conf.chmod(0o644)
+
+        monkeypatch.setattr(config, "CONFIG_FILE", main_conf)
+        monkeypatch.setattr(config, "CONF_D_DIR", conf_d)
+        monkeypatch.setattr(config.os, "getegid", lambda: main_conf.stat().st_gid)
 
         with caplog.at_level("WARNING"):
             config.check_secrets_permissions()

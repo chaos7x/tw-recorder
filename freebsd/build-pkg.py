@@ -53,13 +53,13 @@ PACKAGES = [
         },
         "modes": {"/usr/local/etc/rc.d/tw-recorder": 0o755},
         "post_install": """\
-mkdir -p /etc/tw-recorder/conf.d
-if [ ! -e /etc/tw-recorder/recorder.conf ]; then
-    cp {examples}/recorder.conf.example /etc/tw-recorder/recorder.conf
-fi
 pw groupshow media-pipeline >/dev/null 2>&1 || pw groupadd media-pipeline
 if ! pw usershow tw-recorder >/dev/null 2>&1; then
     pw useradd tw-recorder -c "tw-recorder daemon" -d /nonexistent -s /usr/sbin/nologin -G media-pipeline
+fi
+mkdir -p /etc/tw-recorder/conf.d
+if [ ! -e /etc/tw-recorder/recorder.conf ]; then
+    install -o root -g tw-recorder -m 0640 {examples}/recorder.conf.example /etc/tw-recorder/recorder.conf
 fi
 for dir in /srv/media-pipeline /srv/media-pipeline/recordings /srv/media-pipeline/incoming; do
     if [ ! -d "$dir" ]; then
