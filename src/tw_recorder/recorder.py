@@ -136,26 +136,42 @@ def _write_xattrs(path, attrs: dict[str, str]) -> None:
             return
 
 
+# Serialisiert das kurzzeitige Umstellen des (prozessweiten) Umask in
+# _ensure_channel_dir(): ohne Lock könnten zwei Kanal-Threads ihr jeweils
+# "altes" Umask überkreuz wiederherstellen und 002 dauerhaft stehen lassen.
+_UMASK_LOCK = threading.Lock()
+
+
 def _ensure_channel_dir(out_dir) -> None:
     """
-    Legt das Kanal-Unterverzeichnis unter STORAGE_DIR an und erzwingt beim
-    tatsächlichen Neuanlegen explizit 2775 statt sich auf mkdir()s
-    Standard-Mode zu verlassen: mkdir() allein würde das Gruppen-Schreibrecht
-    durch das Prozess-Umask verlieren (Standard-Mode 0o777 wird umask-
-    maskiert, z.B. auf 0o755 bei umask 022) - das Setgid-Bit selbst wird zwar
-    vom Elternverzeichnis geerbt, das für die media-pipeline-Gruppe eigentlich
-    nötige g+w aber nicht. Ohne das könnte fetchbridge (Mitglied der
-    media-pipeline-Gruppe, aber nicht Owner) Dateien in diesem
-    Kanal-Unterordner nicht mehr verschieben/löschen - exakt das Szenario,
-    für das die 2775-Rechte auf /srv/media-pipeline überhaupt eingeführt
-    wurden.
-    Nur beim tatsächlichen Neuanlegen gesetzt, sonst würde eine bewusste
+    Legt das Kanal-Unterverzeichnis unter STORAGE_DIR mit 2775 an
+    (tw-recorder:media-pipeline, g+w für fetchbridge/yt-upload/Admins - ohne
+    g+w könnte fetchbridge als Gruppenmitglied, aber nicht Owner, Dateien
+    dort nicht verschieben/löschen).
+
+    Das mkdir() läuft dafür unter Umask 002 statt des Prozess-Umasks (022
+    unter systemd/rc.d/Docker würde 0o777 auf 0o755 maskieren); das Setgid-Bit
+    erbt das neue Verzeichnis vom Elternverzeichnis. Ein nachträgliches
+    chmod(0o2775) allein reicht NICHT: die systemd-Unit setzt
+    RestrictSUIDSGID=true, das per seccomp jedes chmod() mit Setgid-Bit mit
+    EPERM ablehnt - die Ordner blieben dann auf 2755 (real so auf einem Host
+    aufgetreten). chmod(0o2775) wird daher nur noch als Fallback versucht,
+    wenn das Ergebnis trotzdem abweicht (z.B. Elternverzeichnis ohne Setgid
+    im Docker-Image).
+
+    Nur beim tatsächlichen Neuanlegen, sonst würde eine bewusste
     Admin-Anpassung bei jedem Recording-Start wieder überschrieben (derselbe
     Fix wie in debian/postinst.sh für /srv/media-pipeline selbst).
     """
-    newly_created = not out_dir.is_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if newly_created:
+    if out_dir.is_dir():
+        return
+    with _UMASK_LOCK:
+        old_umask = os.umask(0o002)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        finally:
+            os.umask(old_umask)
+    if (out_dir.stat().st_mode & 0o7777) != 0o2775:
         try:
             out_dir.chmod(0o2775)
         except OSError as e:
