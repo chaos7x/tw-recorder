@@ -241,6 +241,32 @@ class TestEnsureChannelDir:
         finally:
             os.umask(old_umask)
 
+    def test_2775_without_setgid_chmod_under_restrict_suid_sgid(self, recorder, tmp_path, monkeypatch):
+        """
+        Regression: systemd RestrictSUIDSGID=true lehnt chmod() mit Setgid-Bit
+        per seccomp ab (EPERM) - der Ordner muss trotzdem 2775 bekommen
+        (Setgid geerbt vom Elternverzeichnis, g+w über das mkdir() selbst).
+        """
+        parent = tmp_path / "recordings"
+        parent.mkdir()
+        parent.chmod(0o2775)
+        real_chmod = Path.chmod
+
+        def restricted_chmod(self, mode, **kwargs):
+            if mode & (stat.S_ISUID | stat.S_ISGID):
+                raise PermissionError("Operation not permitted")
+            return real_chmod(self, mode, **kwargs)
+
+        monkeypatch.setattr(Path, "chmod", restricted_chmod)
+        old_umask = os.umask(0o022)
+        try:
+            out_dir = parent / "somechannel"
+            recorder._ensure_channel_dir(out_dir)
+            assert stat.S_IMODE(out_dir.stat().st_mode) == 0o2775
+            assert os.umask(0o022) == 0o022  # Prozess-Umask wiederhergestellt
+        finally:
+            os.umask(old_umask)
+
     def test_existing_dir_permissions_are_not_overwritten(self, recorder, tmp_path):
         """Eine bewusste Admin-Anpassung (z.B. chmod 777) darf nicht bei jedem Recording-Start zurueckgesetzt werden."""
         out_dir = tmp_path / "somechannel"
