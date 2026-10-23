@@ -1,9 +1,12 @@
 """
 Tests für get_config_files_state, get_config_hash, load_config (config.py),
-parse_streamers (daemon.py) und get_extra_args (config.py).
+parse_streamers (daemon.py) und streamlink_extra_args (config.py).
 """
 
+import stat
 from pathlib import Path
+
+import pytest
 
 
 def _write_main_config(tmp_path, content):
@@ -420,18 +423,43 @@ class TestCheckSecretsPermissions:
         assert any("lesbar" in r.message for r in caplog.records)
 
 
-class TestGetExtraArgs:
+class TestStreamlinkExtraArgs:
     def test_no_token_no_webbrowser(self, config):
-        args = config.get_extra_args({"user_token": "", "webbrowser": False})
-        assert args == ["--webbrowser=False"]
+        with config.streamlink_extra_args({"user_token": "", "webbrowser": False}) as args:
+            assert args == ["--webbrowser=False"]
 
-    def test_with_token_and_webbrowser_enabled(self, config):
-        args = config.get_extra_args({"user_token": "abc123", "webbrowser": True})
-        assert args == ["--twitch-api-header", "Authorization=OAuth abc123"]
+    def test_token_not_on_command_line(self, config):
+        with config.streamlink_extra_args({"user_token": "abc123", "webbrowser": True}) as args:
+            assert "abc123" not in " ".join(args)
+            assert args[0] == "--config"
+            token_file = Path(args[1])
+            assert token_file.read_text() == "twitch-api-header=Authorization=OAuth abc123\n"
+            assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+        assert not token_file.exists()
 
     def test_with_token_and_webbrowser_disabled(self, config):
-        args = config.get_extra_args({"user_token": "abc123", "webbrowser": False})
-        assert args == ["--twitch-api-header", "Authorization=OAuth abc123", "--webbrowser=False"]
+        with config.streamlink_extra_args({"user_token": "abc123", "webbrowser": False}) as args:
+            assert args[0] == "--config"
+            assert args[2:] == ["--webbrowser=False"]
+
+    def test_token_file_removed_on_exception(self, config):
+        with pytest.raises(RuntimeError), config.streamlink_extra_args({"user_token": "abc123", "webbrowser": True}) as args:
+            token_file = Path(args[1])
+            raise RuntimeError
+        assert not token_file.exists()
+
+    def test_token_with_newline_is_ignored(self, config, caplog):
+        with caplog.at_level("WARNING"), config.streamlink_extra_args({"user_token": "abc\nretry 0", "webbrowser": True}) as args:
+            assert args == []
+        assert any("Zeilenumbr" in r.message for r in caplog.records)
+
+    def test_unwritable_tempdir_falls_back_without_token(self, config, monkeypatch, caplog):
+        def boom(*a, **kw):
+            raise OSError("read-only")
+        monkeypatch.setattr(config.tempfile, "mkstemp", boom)
+        with caplog.at_level("WARNING"), config.streamlink_extra_args({"user_token": "abc123", "webbrowser": False}) as args:
+            assert args == ["--webbrowser=False"]
+        assert any("ohne Token" in r.message for r in caplog.records)
 
 
 class TestConfDFiles:
