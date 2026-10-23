@@ -442,18 +442,21 @@ def _monitor_recording(proc: subprocess.Popen, url: str, channel: str, cfg: dict
     return False, cfg
 
 
-def _start_streamlink(url: str, quality: str, channel: str, out_pattern: str, cfg: dict) -> subprocess.Popen:
-    """Startet Streamlink und leitet dessen Ausgabe in einem Hintergrund-Thread ans Logging weiter."""
+def _start_streamlink(url: str, quality: str, channel: str, out_pattern: str, cfg: dict, extra_args: list) -> subprocess.Popen:
+    """
+    Startet Streamlink und leitet dessen Ausgabe in einem Hintergrund-Thread ans Logging weiter.
+    extra_args stammt aus config.streamlink_extra_args(), dessen with-Block den
+    gesamten Prozess umspannen muss (enthält ggf. die Token-Config-Datei).
+    """
     cmd = [
         "streamlink",
         "--loglevel", cfg["streamlink_loglevel"],
         "--fs-safe-rules", "POSIX",
-        *config.get_extra_args(cfg),
+        *extra_args,
         "-o", out_pattern,
         url,
         quality,
     ]
-    # Enthält ggf. den OAuth-Token (--twitch-api-header) - daher ausschließlich auf DEBUG-Level.
     logger.debug(f"Streamlink-Kommando für {channel}: {cmd}")
 
     proc = subprocess.Popen(
@@ -501,8 +504,9 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             title_split_triggered = False
             try:
                 logger.info(f"🔴 Starte Aufzeichnung für Kanal: {channel}")
-                proc = _start_streamlink(url, quality, channel, _build_out_pattern(out_dir, channel), cfg)
-                title_split_triggered, cfg = _monitor_recording(proc, url, channel, cfg, stop_event)
+                with config.streamlink_extra_args(cfg) as extra_args:
+                    proc = _start_streamlink(url, quality, channel, _build_out_pattern(out_dir, channel), cfg, extra_args)
+                    title_split_triggered, cfg = _monitor_recording(proc, url, channel, cfg, stop_event)
 
                 logger.info(f"⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...")
                 time.sleep(2)

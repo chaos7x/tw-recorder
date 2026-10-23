@@ -1,14 +1,19 @@
+# Alle FROM-Images sind per Digest gepinnt (Tag bleibt zur Lesbarkeit stehen):
+# ein nachträglich umgebogener Tag auf Docker Hub landet so nicht ungeprüft im
+# Build. Dependabot (docker) schlägt neue Digests/Versionen wöchentlich als PR
+# vor. OS-Security-Patches kommen unabhängig davon weiter über apt-get/apk
+# upgrade beim Build (docker-refresh.yml / os-patch-release.yml).
 # ==========================================
 # STUFE 0: Statische Binaries bereitstellen
 # ==========================================
-FROM mwader/static-ffmpeg:latest AS ffmpeg-binaries
+FROM mwader/static-ffmpeg:9.0.2-1@sha256:f5d100184884eb3e82b0eb14bb5ebf98da99826ac824989720297fb9ef21c822 AS ffmpeg-binaries
 
 # ==========================================
 # STUFE 1: Builder - installiert tw_recorder + streamlink isoliert per pip
 # ==========================================
 # Eigene Stage, damit pip/setuptools NICHT im finalen Laufzeit-Image landen -
 # nur die fertig installierten Pakete werden per COPY --from übernommen.
-FROM python:3-slim AS builder
+FROM python:3-slim@sha256:044d5bd747976e21f8bc4d746c3479b19a84bb8ae6261b802acdd26b29036c93 AS builder
 
 WORKDIR /build
 
@@ -19,7 +24,10 @@ WORKDIR /build
 # Package selbst + dist-info korrekt installiert waren). Getrennte Ordner
 # umgehen das und halten streamlinks Neben-Scripts (idna, normalizer,
 # wsdump, ...) außerdem sauber von tw-recorder getrennt.
-RUN pip install --break-system-packages --no-cache-dir --target=/install/streamlink streamlink
+# streamlink-Version kommt aus requirements.txt (exakter Pin, von Dependabot
+# per PR aktualisiert) statt bei jedem Build ungeprüft die neueste zu ziehen.
+COPY requirements.txt /build/requirements.txt
+RUN pip install --break-system-packages --no-cache-dir --target=/install/streamlink -r /build/requirements.txt
 
 COPY pyproject.toml /build/pyproject.toml
 COPY src/ /build/src/
@@ -40,7 +48,7 @@ COPY --chmod=644 recorder.conf.example /rootfs/etc/tw-recorder/recorder.conf
 # ==========================================
 # STUFE 2: FINAL STAGE (schlankes Laufzeit-Image, kein pip/setuptools)
 # ==========================================
-FROM python:3-slim
+FROM python:3-slim@sha256:044d5bd747976e21f8bc4d746c3479b19a84bb8ae6261b802acdd26b29036c93
 
 # ------------------------------------------
 # LAYER 1: FFmpeg Binaries aus STUFE 0 kopieren

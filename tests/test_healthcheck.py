@@ -36,13 +36,38 @@ class TestWriteHeartbeatAndHealthcheck:
 
         assert healthcheck.run_healthcheck() == 1
 
-    def test_write_heartbeat_does_not_raise_if_unwritable(self, healthcheck, config, monkeypatch):
+    def test_write_heartbeat_does_not_raise_if_unwritable(self, healthcheck, config, tmp_path, monkeypatch):
         """Ein Healthcheck-Problem darf den Recorder nicht zum Absturz bringen."""
-
-        class UnwritablePath:
-            def write_text(self, content):
-                raise OSError("Permission denied")
-
-        monkeypatch.setattr(config, "HEALTH_FILE", UnwritablePath())
+        monkeypatch.setattr(config, "HEALTH_FILE", tmp_path / "missing-dir" / "recorder.health")
 
         healthcheck.write_heartbeat()  # darf nicht raisen
+
+    def test_write_heartbeat_does_not_follow_symlink(self, healthcheck, config, tmp_path, monkeypatch):
+        victim = tmp_path / "victim"
+        victim.write_text("unverändert")
+        health_file = tmp_path / "recorder.health"
+        health_file.symlink_to(victim)
+        monkeypatch.setattr(config, "HEALTH_FILE", health_file)
+
+        healthcheck.write_heartbeat()
+
+        assert victim.read_text() == "unverändert"
+
+    def test_symlinked_heartbeat_is_unhealthy(self, healthcheck, config, tmp_path, monkeypatch):
+        fresh = tmp_path / "fresh"
+        fresh.write_text(str(time.time()))
+        health_file = tmp_path / "recorder.health"
+        health_file.symlink_to(fresh)
+        monkeypatch.setattr(config, "HEALTH_FILE", health_file)
+
+        assert healthcheck.run_healthcheck() == 1
+
+
+class TestDefaultHealthDir:
+    def test_uses_run_dir_if_present(self, config, monkeypatch):
+        monkeypatch.setattr(config.os.path, "isdir", lambda p: p == "/var/run/tw-recorder")
+        assert config._default_health_dir() == "/var/run/tw-recorder"
+
+    def test_falls_back_to_tempdir(self, config, monkeypatch):
+        monkeypatch.setattr(config.os.path, "isdir", lambda p: False)
+        assert config._default_health_dir() == config.tempfile.gettempdir()

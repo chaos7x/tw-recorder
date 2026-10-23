@@ -1,1 +1,6 @@
-streamlink>=8.6.2
+# Wird von den Dockerfiles (pip install -r) fuer streamlink im Image benutzt.
+# Bewusst ein exakter Pin: ein neues streamlink-Release landet nur ueber einen
+# Dependabot-PR (pip-Ecosystem, siehe .github/dependabot.yml) im Image, der
+# vorher durch docker-build.yml (Build + Trivy-Scan) laeuft.
+# Bare-Metal/.deb/FreeBSD betrifft das nicht (dort: streamlink >= 8.2.0, siehe README).
+streamlink==8.6.2

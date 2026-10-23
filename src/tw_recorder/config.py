@@ -35,12 +35,29 @@ CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
 # Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
 STORAGE_DIR = Path("/srv/media-pipeline/recordings")
 
+
+def _default_health_dir() -> str:
+    """
+    Verzeichnis der Heartbeat-Datei: /var/run/tw-recorder, sofern der Init-Dienst
+    es angelegt hat (systemd RuntimeDirectory=, init.d bzw. FreeBSD-rc.d per
+    install -d). Es gehört dem Dienstuser - ein anderer lokaler User kann die
+    Datei dort weder vorab anlegen noch per Symlink unterschieben, anders als
+    unter festem Namen im gemeinsamen /tmp. Außerdem findet so auch ein
+    manueller `tw-recorder --healthcheck` außerhalb des PrivateTmp-Namespace der
+    Unit die Datei. /var/run statt /run: unter Linux ein Symlink auf /run,
+    unter FreeBSD der übliche Ort. Sonst (Docker, manueller Aufruf) wie bisher
+    das Temp-Verzeichnis.
+    """
+    run_dir = "/var/run/tw-recorder"
+    return run_dir if os.path.isdir(run_dir) else tempfile.gettempdir()
+
+
 # Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
 # aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
 # leichtgewichtiger Aufruf desselben Skripts (--healthcheck) prüft nur, ob
 # sie frisch genug ist - ohne Config zu laden, damit der Aufruf schnell ist
 # und keine Nebenwirkungen hat.
-HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "tw-recorder.health")))
+HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(_default_health_dir()) / "tw-recorder.health")))
 # Wie alt die Heartbeat-Datei maximal sein darf, bevor --healthcheck als
 # "unhealthy" gilt. Grosszügig über dem run_daemon()-Zyklus (5s) bemessen.
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
@@ -302,10 +319,52 @@ def check_secrets_permissions():
             )
 
 
-def get_extra_args(cfg: dict):
+@contextlib.contextmanager
+def streamlink_extra_args(cfg: dict):
+    """
+    Liefert die zusätzlichen Streamlink-Argumente für einen Aufruf und gilt
+    für die gesamte Laufzeit des damit gestarteten Prozesses.
+
+    Der Twitch-User-Token steht dabei bewusst NICHT in der Kommandozeile
+    (`--twitch-api-header Authorization=OAuth ...`): die ist über ps bzw.
+    /proc/<pid>/cmdline für jeden lokalen User lesbar. Stattdessen landet der
+    Header in einer per mkstemp angelegten Streamlink-Config-Datei (0600,
+    zufälliger Name, O_EXCL - kein Vorab-Anlegen/Symlink durch Andere möglich),
+    die per `--config` übergeben und nach dem with-Block wieder gelöscht wird.
+    Unter systemd liegt sie zusätzlich im privaten /tmp des Dienstes
+    (PrivateTmp=true). Nebeneffekt von `--config`: Streamlinks globale
+    Standard-Config (~/.config/streamlink/config) wird dann nicht mehr
+    geladen, die Plugin-Config (config.twitch) weiterhin.
+
+    Lässt sich die Datei nicht anlegen (z.B. read-only /tmp), läuft Streamlink
+    ohne Token weiter (Werbung wird dann nicht übersprungen) statt den Token
+    doch wieder in die Kommandozeile zu schreiben.
+    """
     args = []
-    if cfg["user_token"]:
-        args.extend(["--twitch-api-header", f"Authorization=OAuth {cfg['user_token']}"])
+    token_file = None
+    token = cfg["user_token"]
+    if token and ("\n" in token or "\r" in token):
+        # Ein Zeilenumbruch würde in der Config-Datei eine weitere Streamlink-
+        # Option einschleusen.
+        logger.warning("⚠️ user_token enthält Zeilenumbrüche - wird ignoriert.")
+        token = ""
+    if token:
+        try:
+            fd, token_file = tempfile.mkstemp(prefix="tw-recorder-streamlink-", suffix=".conf")
+            with os.fdopen(fd, "w") as f:
+                f.write(f"twitch-api-header=Authorization=OAuth {token}\n")
+            args.extend(["--config", token_file])
+        except OSError as e:
+            logger.warning(f"⚠️ Konnte Streamlink-Config für den Twitch-Token nicht anlegen ({e}) - Aufruf ohne Token.")
+            if token_file:
+                with contextlib.suppress(OSError):
+                    os.unlink(token_file)
+                token_file = None
     if not cfg["webbrowser"]:
         args.append("--webbrowser=False")
-    return args
+    try:
+        yield args
+    finally:
+        if token_file:
+            with contextlib.suppress(OSError):
+                os.unlink(token_file)

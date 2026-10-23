@@ -52,4 +52,15 @@ procname="/usr/sbin/daemon"
 command="/usr/sbin/daemon"
 command_args="-f -S -T tw-recorder -r -R 5 -P ${pidfile} -u ${tw_recorder_runas} ${tw_recorder_command} -D ${tw_recorder_args}"
 
+start_precmd="tw_recorder_prestart"
+
+# Laufzeitverzeichnis fuer die Heartbeat-Datei (Pendant zu RuntimeDirectory=
+# in der systemd-Unit): gehoert dem Dienstuser, ein anderer lokaler User kann
+# die Datei dort weder vorab anlegen noch per Symlink unterschieben - anders
+# als unter festem Namen im gemeinsamen /tmp.
+tw_recorder_prestart()
+{
+	install -d -o ${tw_recorder_runas} -m 0755 /var/run/tw-recorder
+}
+
 run_rc_command "$1"

@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from tw_recorder.config import get_extra_args
+from tw_recorder.config import streamlink_extra_args
 
 logger = logging.getLogger(__name__)
 
@@ -114,16 +114,13 @@ def check_stream_online(url: str, cfg: dict, retry: bool = True) -> bool:
                         )
 
     # Fallback für Plattformen außer Twitch oder fehlende Keys
-    cmd = ["streamlink", "--stream-url"]
-    cmd.extend(get_extra_args(cfg))
-    cmd.extend([url, "best"])
-
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False
-    )
+    with streamlink_extra_args(cfg) as extra_args:
+        proc = subprocess.run(
+            ["streamlink", "--stream-url", *extra_args, url, "best"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False
+        )
     return proc.returncode == 0
 
 

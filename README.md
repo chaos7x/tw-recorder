@@ -233,6 +233,8 @@ Die `.cred`-Datei ist Base64-kodierter Text (kein rohes Binärformat, `cat` ist 
 
 `TWITCH_CREDENTIALS_FILE` selbst landet zwar als echte Prozess-Umgebungsvariable (über `/proc/<pid>/environ` einsehbar) - ihr Wert ist aber nur ein **Dateipfad** (z.B. `/run/credentials/tw-recorder.service/twitch-secrets`), kein Secret. Das eigentliche `client_secret`/`user_token` liest `tw-recorder` direkt aus der Datei, es landet nie selbst in einer Umgebungsvariable - genau das Zugriffsmuster, das systemd selbst für Anwendungscode empfiehlt (siehe [systemd/systemd docs/CREDENTIALS.md](https://github.com/systemd/systemd/blob/main/docs/CREDENTIALS.md)). Nach Schritt 4 entfällt außerdem die Warnung aus `check_secrets_permissions()` von selbst, da `recorder.conf` dann kein Secret mehr enthält.
 
+An streamlink reicht `tw-recorder` den `user_token` ebenfalls nicht über die Kommandozeile weiter (die wäre über `ps` bzw. `/proc/<pid>/cmdline` für jeden lokalen User lesbar), sondern über eine kurzlebige Streamlink-Config-Datei mit `0600` im Temp-Verzeichnis (unter systemd das private `/tmp` des Dienstes), die per `--config` übergeben und nach dem streamlink-Lauf wieder gelöscht wird. Nebeneffekt: eine globale `~/.config/streamlink/config` des Dienstusers wird dann nicht mehr geladen, die Plugin-Config `config.twitch` weiterhin.
+
 `TWITCH_CREDENTIALS_FILE` funktioniert dabei unabhängig von systemd-creds - der Pfad kann genauso auf eine gewöhnliche Datei irgendwo auf der Platte zeigen, falls eine einzelne KEY=VALUE-Datei statt der `[twitch]`-Sektion in `recorder.conf` bevorzugt wird.
 
 ### Alternative: FreeBSD-Paket (.pkg)

@@ -37,6 +37,11 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# /run/tw-recorder (dem Dienstuser gehoerend, beim Stoppen wieder entfernt) fuer
+# die Heartbeat-Datei: config.py nimmt es automatisch, sobald es existiert -
+# dann findet auch ein manueller `tw-recorder --healthcheck` ausserhalb des
+# PrivateTmp-Namespace die Datei.
+RuntimeDirectory=tw-recorder
 ReadWritePaths=/srv/media-pipeline /var/log/tw-recorder
 ProtectKernelTunables=true
 ProtectKernelModules=true
