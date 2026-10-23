@@ -35,12 +35,29 @@ CONF_D_DIR = Path(os.getenv("CONF_D_DIR", "/etc/tw-recorder/conf.d"))
 # Systemuser (tw-recorder, fetchbridge) tatsaechlich zugreifen koennen.
 STORAGE_DIR = Path("/srv/media-pipeline/recordings")
 
+
+def _default_health_dir() -> str:
+    """
+    Verzeichnis der Heartbeat-Datei: /var/run/tw-recorder, sofern der Init-Dienst
+    es angelegt hat (systemd RuntimeDirectory=, init.d bzw. FreeBSD-rc.d per
+    install -d). Es gehört dem Dienstuser - ein anderer lokaler User kann die
+    Datei dort weder vorab anlegen noch per Symlink unterschieben, anders als
+    unter festem Namen im gemeinsamen /tmp. Außerdem findet so auch ein
+    manueller `tw-recorder --healthcheck` außerhalb des PrivateTmp-Namespace der
+    Unit die Datei. /var/run statt /run: unter Linux ein Symlink auf /run,
+    unter FreeBSD der übliche Ort. Sonst (Docker, manueller Aufruf) wie bisher
+    das Temp-Verzeichnis.
+    """
+    run_dir = "/var/run/tw-recorder"
+    return run_dir if os.path.isdir(run_dir) else tempfile.gettempdir()
+
+
 # Heartbeat-Datei für den Healthcheck (z.B. Docker HEALTHCHECK). run_daemon()
 # aktualisiert sie bei jedem Schleifendurchlauf; ein separater, sehr
 # leichtgewichtiger Aufruf desselben Skripts (--healthcheck) prüft nur, ob
 # sie frisch genug ist - ohne Config zu laden, damit der Aufruf schnell ist
 # und keine Nebenwirkungen hat.
-HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(tempfile.gettempdir()) / "tw-recorder.health")))
+HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(_default_health_dir()) / "tw-recorder.health")))
 # Wie alt die Heartbeat-Datei maximal sein darf, bevor --healthcheck als
 # "unhealthy" gilt. Grosszügig über dem run_daemon()-Zyklus (5s) bemessen.
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
