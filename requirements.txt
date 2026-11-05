@@ -3,4 +3,4 @@
 # Dependabot-PR (pip-Ecosystem, siehe .github/dependabot.yml) im Image, der
 # vorher durch docker-build.yml (Build + Trivy-Scan) laeuft.
 # Bare-Metal/.deb/FreeBSD betrifft das nicht (dort: streamlink >= 8.2.0, siehe README).
-streamlink==8.6.2
+streamlink==8.6.3
