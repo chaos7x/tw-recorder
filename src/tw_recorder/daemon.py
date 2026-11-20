@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 
-from tw_recorder import config
+from tw_recorder import config, skip
 from tw_recorder.healthcheck import write_heartbeat
 from tw_recorder.recorder import record_loop
 
@@ -117,6 +117,7 @@ def run_daemon():
     # Initialen Zustand beim Start erfassen
     LAST_CONFIG_HASH, LAST_FILES_STATE = config.get_config_hash()
     config.check_secrets_permissions()
+    skip.ensure_skip_dir()
     sync_processes()
 
     while True:

@@ -30,6 +30,8 @@ do_start() {
     # RuntimeDirectory= in der systemd-Unit): gehoert dem Dienstuser, ein
     # anderer lokaler User kann die Datei dort weder vorab anlegen noch per
     # Symlink unterschieben - anders als unter festem Namen im gemeinsamen /tmp.
+    # Bleibt bei stop/restart bewusst stehen (erst ein Reboot leert es):
+    # darin liegen die Skip-Marker von `tw-recorder --skip KANAL`.
     install -d -o "$RUN_AS" -g "$RUN_AS" -m 0755 "/run/$NAME"
     # --background: tw-recorder daemonisiert sich nicht selbst (laeuft im
     # Vordergrund, wie unter systemd Type=simple) - start-stop-daemon

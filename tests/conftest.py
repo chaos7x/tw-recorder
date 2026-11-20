@@ -90,3 +90,9 @@ def reset_twitch_globals(twitch_api):
     twitch_api.token_expires_at = 0
     twitch_api.api_unavailable_until = 0.0
     twitch_api.api_currently_down = False
+
+
+@pytest.fixture(scope="session")
+def skip():
+    from tw_recorder import skip
+    return skip

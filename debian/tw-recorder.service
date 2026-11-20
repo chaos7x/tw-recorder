@@ -42,6 +42,11 @@ PrivateTmp=true
 # dann findet auch ein manueller `tw-recorder --healthcheck` ausserhalb des
 # PrivateTmp-Namespace die Datei.
 RuntimeDirectory=tw-recorder
+# Bleibt bei Stop/Restart erhalten (nur ein Reboot leert /run): darin liegen
+# die Skip-Marker von `tw-recorder --skip KANAL` (Unterordner skip/), die
+# einen Dienst-Neustart ueberstehen sollen. Keine zusaetzlichen Rechte noetig -
+# /run/tw-recorder ist trotz ProtectSystem=strict schon beschreibbar.
+RuntimeDirectoryPreserve=yes
 ReadWritePaths=/srv/media-pipeline /var/log/tw-recorder
 ProtectKernelTunables=true
 ProtectKernelModules=true

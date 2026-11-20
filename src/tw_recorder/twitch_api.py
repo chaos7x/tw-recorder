@@ -129,7 +129,8 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
     Fragt via Twitch Helix API Titel/Kategorie des aktuell laufenden Streams ab.
     Wird für die Split-Erkennung bei Titel-/Kategorieänderung genutzt.
 
-    Gibt bei Erfolg {"online": bool, "title": str, "category": str} zurück.
+    Gibt bei Erfolg {"online": bool, "title": str, "category": str, "id": str}
+    zurück (id = Twitch-Stream-ID, für den Skip des aktuellen Streams).
     Gibt None zurück, wenn keine Twitch-API-Zugangsdaten vorhanden sind, die
     Plattform kein Twitch ist, oder die API gerade nicht erreichbar ist.
     Verursacht nur 1 zusätzlichen Helix-API-Aufruf pro Aufruf (kostet 1 Punkt
@@ -172,8 +173,9 @@ def get_stream_info(url: str, cfg: dict, retry: bool = True) -> dict | None:
                     "online": True,
                     "title": streams[0].get("title") or "",
                     "category": streams[0].get("game_name") or "",
+                    "id": str(streams[0].get("id") or ""),
                 }
-            return {"online": False, "title": "", "category": ""}
+            return {"online": False, "title": "", "category": "", "id": ""}
     except urllib.error.HTTPError as e:
         if e.code == 401 and retry:
             get_app_access_token(client_id, client_secret, force_refresh=True)

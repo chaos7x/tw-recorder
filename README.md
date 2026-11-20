@@ -16,6 +16,7 @@ Eine Übersicht der internen Architektur (Module, Datenfluss, Diagramm) findet s
 * **Automatisches Remuxing:** Konvertiert aufgezeichnete `.ts`-Dateien direkt nach der Übertragung via FFmpeg verlustfrei nach `.mkv`.
 * **Metadaten & API-Optimierung:** Schreibt Titel, Kategorie, Artist (Kanal), Aufnahmedatum und die sekundengenaue Startzeit der Aufnahme (`creation_time`, in der MKV als `DateUTC`, korrekt nach UTC umgerechnet aus der lokalen `TZ`; zusätzlich als eigenes Tag `RECORDING_START`, das `yt-upload` als Aufnahmedatum und Beschreibungszeile übernimmt) sowie einen Start-Timecode (`TIMECODE`, lokale Zeit `HH:MM:SS:00`, der bei `ffmpeg -i aufnahme.mkv -c copy aufnahme.mov` oder mit `.mov` als Endung in `filename_pattern` direkt zur Timecode-Spur wird) direkt in die MKV-Metadaten und kürzt Titel dynamisch auf maximal 95 Zeichen (optimiert für YouTube API Beschränkungen). Zusätzlich werden dieselben Extended Attributes (`user.dublincore.*`, `user.xdg.referrer.url`) gesetzt, die auch `yt-dlp --xattrs` schreibt - Dateimanager & Tools behandeln Aufnahmen und yt-dlp-Downloads damit einheitlich (nur auf Dateisystemen mit xattr-Unterstützung, z.B. ext4/xfs/btrfs; auf FAT/exFAT o.ä. wird das übersprungen, kein Fehler).
 * **Titel-/Kategorie-Split:** Erkennt Änderungen am Stream-Titel oder der Kategorie während einer laufenden Aufnahme und beendet/startet die Aufzeichnung automatisch neu (optional, `split_on_title_change`).
+* **Laufende Aufnahme abbrechen:** `tw-recorder --skip KANAL` beendet die laufende Aufnahme sauber und nimmt genau diesen Stream nicht erneut auf - der nächste Stream des Kanals wird wieder normal aufgezeichnet (siehe Abschnitt „Laufende Aufnahme abbrechen“ unten).
 * **Hot-Reloading der Konfiguration:** Überwacht die Konfigurationsdatei (`recorder.conf`) und übernimmt Änderungen automatisch im laufenden Betrieb ohne Neustart.
 * **Kollisions- & Mehrfachstart-Schutz:** Verhindert mittels File-Locking (`.record.lock`), dass ein Kanal mehrfach parallel aufgenommen wird.
 * **Schlankes Docker-Image:** Basiert auf Debian Trixie Slim mit statisch kompiliertem FFmpeg/FFprobe (`mwader/static-ffmpeg`).
@@ -298,6 +299,37 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 
 ---
 
+## ⏭️ Laufende Aufnahme abbrechen (`--skip`)
+
+Manchmal merkt man erst während eines Streams, dass man ausgerechnet diesen nicht aufnehmen will. Dafür gibt es:
+
+```bash
+sudo tw-recorder --skip somestreamer         # Aufnahme beenden, angefangenen Teil verwerfen
+sudo tw-recorder --skip somestreamer --keep  # Aufnahme beenden, bisherigen Teil normal remuxen
+sudo tw-recorder --list-skips                # gesetzte Skips anzeigen
+sudo tw-recorder --unskip somestreamer       # Skip aufheben, Aufnahme startet wieder
+
+# Docker
+docker exec tw-recorder tw-recorder --skip somestreamer
+```
+
+`KANAL` darf auch als URL angegeben werden (`https://twitch.tv/somestreamer`).
+
+Ablauf:
+
+1. Der Befehl legt nur eine Marker-Datei unter `/run/tw-recorder/skip/` an (unter FreeBSD `/var/run/tw-recorder/skip/`, in Docker und ohne Init-Dienst im Temp-Verzeichnis als `tw-recorder-skip/`).
+2. Der Dämon sieht den Marker innerhalb von etwa einer Sekunde und beendet streamlink per SIGTERM, die `.ts`-Datei wird also sauber abgeschlossen. Ohne `--keep` wird dieser angefangene Abschnitt gelöscht und landet nicht in der Pipeline (bei `split_on_title_change` bereits fertig gesplittete, frühere Abschnitte desselben Streams bleiben erhalten). Mit `--keep` wird er wie gewohnt remuxt.
+3. Der Marker wird an die **Twitch-Stream-ID** des laufenden Streams gebunden. Solange genau dieser Stream läuft, nimmt der Dämon nicht neu auf, auch nicht nach einem Neustart des Diensts.
+4. Der Skip endet von selbst, sobald der Streamer einen **neuen Stream** startet (neue Stream-ID), oder mit einem **Reboot** (`/run` ist tmpfs). In Docker überlebt das Temp-Verzeichnis einen Container-Neustart; durch die Stream-ID-Bindung wird trotzdem nur der eine Stream übersprungen.
+
+Hinweise:
+
+* Die Stream-ID kommt aus der Twitch-Helix-API. Ohne `client_id`/`client_secret` gibt es keine ID, dann gilt der Skip bis zum Reboot oder `--unskip`.
+* `--skip` für einen Kanal, der gerade offline ist, überspringt dessen **nächsten** Stream.
+* Rechte: Das Skip-Verzeichnis legt der Dämon selbst an, es gehört dem Dienstuser (`0755`). Den Befehl dürfen daher nur root oder der Dienstuser ausführen (`sudo -u tw-recorder tw-recorder --skip ...` geht auch). Gruppen- oder Fremdzugriff ist nicht nötig. Die systemd-Unit braucht dafür keine zusätzlichen Rechte, nur `RuntimeDirectoryPreserve=yes`, damit `/run/tw-recorder` einen Dienst-Neustart übersteht; init.d- und rc.d-Skript lassen das Verzeichnis beim Stoppen ohnehin stehen.
+
+---
+
 ## ⚙️ Umgebungsvariablen (Environment)
 
 * `CLIENT_ID` / `TWITCH_CLIENT_ID`: (optional) Client-ID für die Twitch Helix API Abfrage.
@@ -306,6 +338,7 @@ Drei Dockerfiles für unterschiedliche Basis-Images - alle bauen dasselbe `tw_re
 * `SLEEP_INTERVAL`: Standard `15`. Intervall in Sekunden zwischen den Statusprüfungen.
 * `CONFIG_FILE`: Standard `/etc/tw-recorder/recorder.conf`. Pfad zur Konfigurationsdatei im Container.
 * `STORAGE_DIR`: Standard `/srv/media-pipeline/recordings`, einheitlich für Docker und Bare-Metal - dasselbe Verzeichnis, aus dem `fetchbridge` liest (`SOURCE_DIR`). Das `.deb`-Postinst legt es mit einer gemeinsamen Gruppe (`media-pipeline`) an, damit beide Systemuser darauf zugreifen können.
+* `SKIP_DIR`: Standard `/var/run/tw-recorder/skip` (sofern `/var/run/tw-recorder` existiert), sonst `<tempdir>/tw-recorder-skip`. Marker-Verzeichnis für `--skip`; Dämon und CLI-Aufruf müssen denselben Wert sehen.
 * `LOG_LEVEL`: `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` (case-insensitive). Standard `INFO`, ein ungültiger Wert fällt sicher darauf zurück. Hat immer Vorrang vor `DEBUG`.
 * `DEBUG`: Standard `0`. Auf `true`/`1` setzen für erweiterte Log-Ausgaben - abwärtskompatible Kurzform für `LOG_LEVEL=DEBUG`, nur wirksam falls `LOG_LEVEL` nicht gesetzt ist.
 
