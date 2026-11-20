@@ -10,7 +10,7 @@ import time
 import unicodedata
 from datetime import UTC, datetime
 
-from tw_recorder import config
+from tw_recorder import config, skip
 
 try:
     import fcntl
@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 # Zielendungen (filename_pattern), für die ffmpeg den MOV/MP4-Muxer nutzt
 MOV_SUFFIXES = {".mov", ".mp4", ".m4v"}
+
+# Ergebnis von _monitor_recording(): warum die Aufnahme endete
+ENDED = "ended"   # Stream-Ende, streamlink-Abbruch oder Stop-Signal
+SPLIT = "split"   # Titel-/Kategorieänderung (split_on_title_change)
+SKIPPED = "skip"  # `tw-recorder --skip KANAL` (siehe skip.py)
 
 
 def _pump_subprocess_output(proc: subprocess.Popen, channel: str) -> None:
@@ -268,6 +273,42 @@ def _build_meta_title(channel: str, category: str, full_title: str, date_str: st
     return f"{prefix}{clean_title}{suffix}"
 
 
+def _latest_ts_file(out_dir, channel: str):
+    """
+    Neueste .ts-Datei in out_dir, sofern sie jünger als 300s ist (sonst
+    vermutlich von einem früheren Lauf); None, wenn es keine passende gibt.
+    """
+    ts_files = sorted(out_dir.glob("*.ts"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not ts_files:
+        logger.warning(
+            f"Kein .ts-File für {channel} in {out_dir} gefunden - "
+            "Remuxing übersprungen (Aufnahme evtl. zu kurz/fehlgeschlagen)."
+        )
+        return None
+
+    latest_file = ts_files[0]
+    age_sec = time.time() - latest_file.stat().st_mtime
+    if age_sec >= 300:
+        logger.warning(
+            f"Neueste .ts-Datei für {channel} ({latest_file.name}) ist "
+            f"{age_sec:.0f}s alt (Limit: 300s) - vermutlich von einem "
+            "früheren Lauf, übersprungen."
+        )
+        return None
+    return latest_file
+
+
+def _discard_recording(out_dir, channel: str) -> None:
+    """Löscht den angefangenen .ts-Teil einer per --skip abgebrochenen Aufnahme."""
+    try:
+        latest_file = _latest_ts_file(out_dir, channel)
+        if latest_file is not None:
+            latest_file.unlink(missing_ok=True)
+            logger.info(f"🗑️ Abgebrochene Aufnahme verworfen: {latest_file.name}")
+    except OSError as e:
+        logger.warning(f"Konnte abgebrochene Aufnahme für {channel} nicht löschen: {e}")
+
+
 def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
     """
     Remuxt die zuletzt geschriebene .ts-Aufnahme von channel verlustfrei nach
@@ -275,22 +316,8 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
     löscht danach die .ts-Datei. Fehler werden nur geloggt.
     """
     try:
-        ts_files = sorted(out_dir.glob("*.ts"), key=lambda f: f.stat().st_mtime, reverse=True)
-        if not ts_files:
-            logger.warning(
-                f"Kein .ts-File für {channel} in {out_dir} gefunden - "
-                "Remuxing übersprungen (Aufnahme evtl. zu kurz/fehlgeschlagen)."
-            )
-            return
-
-        latest_file = ts_files[0]
-        age_sec = time.time() - latest_file.stat().st_mtime
-        if age_sec >= 300:
-            logger.warning(
-                f"Neueste .ts-Datei für {channel} ({latest_file.name}) ist "
-                f"{age_sec:.0f}s alt (Limit: 300s) - vermutlich von einem "
-                "früheren Lauf, Remuxing übersprungen."
-            )
+        latest_file = _latest_ts_file(out_dir, channel)
+        if latest_file is None:
             return
 
         date_str, time_str, parsed_channel, category, full_title = (
@@ -389,12 +416,13 @@ def _remux_recording(out_dir, channel: str, cfg: dict) -> None:
 
 
 def _monitor_recording(proc: subprocess.Popen, url: str, channel: str, cfg: dict,
-                       stop_event: threading.Event) -> tuple[bool, dict]:
+                       stop_event: threading.Event) -> tuple[str, dict]:
     """
     Überwacht einen laufenden Streamlink-Prozess bis zu dessen Ende, einem
-    Stop-Signal oder einer Titel-/Kategorieänderung (split_on_title_change).
-    Lädt die Config bei Änderung nach, damit Einstellungen auch während einer
-    mehrstündigen Aufnahme greifen. Gibt (title_split_triggered, cfg) zurück.
+    Stop-Signal, einem Skip-Marker (tw-recorder --skip) oder einer
+    Titel-/Kategorieänderung (split_on_title_change). Lädt die Config bei
+    Änderung nach, damit Einstellungen auch während einer mehrstündigen
+    Aufnahme greifen. Gibt (ENDED | SPLIT | SKIPPED, cfg) zurück.
     """
     sleep_interval = cfg["sleep_interval"]
     last_title, last_category = (None, None)
@@ -407,7 +435,13 @@ def _monitor_recording(proc: subprocess.Popen, url: str, channel: str, cfg: dict
     while proc.poll() is None:
         if stop_event.is_set():
             _stop_process(proc, timeout=5)
-            return False, cfg
+            return ENDED, cfg
+
+        if skip.is_requested(channel.lower()):
+            logger.info(f"⏭️ Skip für {channel} angefordert - beende laufende Aufnahme.")
+            # SIGTERM wie beim Titel-Split: streamlink schließt die .ts sauber ab
+            _stop_process(proc, timeout=10)
+            return SKIPPED, cfg
 
         if (time.monotonic() - last_cfg_reload) >= sleep_interval:
             last_cfg_reload = time.monotonic()
@@ -435,11 +469,11 @@ def _monitor_recording(proc: subprocess.Popen, url: str, channel: str, cfg: dict
                     f"'{info['title']}'/'{info['category']}'). Splitte Aufnahme."
                 )
                 _stop_process(proc, timeout=10)
-                return True, cfg
+                return SPLIT, cfg
 
         time.sleep(1)
 
-    return False, cfg
+    return ENDED, cfg
 
 
 def _start_streamlink(url: str, quality: str, channel: str, out_pattern: str, cfg: dict, extra_args: list) -> subprocess.Popen:
@@ -470,8 +504,25 @@ def _start_streamlink(url: str, quality: str, channel: str, out_pattern: str, cf
     return proc
 
 
+def _current_stream_id(url: str, cfg: dict) -> str | None:
+    """Twitch-Stream-ID des laufenden Streams (None ohne API/offline)."""
+    info = get_stream_info(url, cfg)
+    if info and info["online"] and info.get("id"):
+        return info["id"]
+    return None
+
+
+def _skip_active(channel: str, url: str, cfg: dict) -> bool:
+    """True, wenn für den gerade live gesehenen Kanal ein gültiger Skip-Marker existiert."""
+    if not skip.is_requested(channel):
+        return False
+    return skip.should_skip(channel, _current_stream_id(url, cfg))
+
+
 def record_loop(url: str, quality: str, stop_event: threading.Event):
     channel = url.rstrip("/").split("/")[-1]
+    # Marker-Dateien sind kleingeschrieben (Twitch-Logins sind case-insensitive)
+    skip_channel = channel.lower()
 
     # Config nur bei tatsächlicher Änderung neu laden (Hash-Vergleich), statt bei
     # jedem Poll-Tick blind neu zu parsen - spart bei vielen Kanälen Datei-I/O.
@@ -490,6 +541,10 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
         lock_file = out_dir / ".record.lock"
 
         if check_stream_online(url, cfg):
+            if _skip_active(skip_channel, url, cfg):
+                time.sleep(sleep_interval)
+                continue
+
             lock_fd = None
             if HAS_FCNTL:
                 try:
@@ -501,16 +556,30 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
                     time.sleep(sleep_interval)
                     continue
 
-            title_split_triggered = False
+            outcome = ENDED
             try:
                 logger.info(f"🔴 Starte Aufzeichnung für Kanal: {channel}")
                 with config.streamlink_extra_args(cfg) as extra_args:
                     proc = _start_streamlink(url, quality, channel, _build_out_pattern(out_dir, channel), cfg, extra_args)
-                    title_split_triggered, cfg = _monitor_recording(proc, url, channel, cfg, stop_event)
+                    outcome, cfg = _monitor_recording(proc, url, channel, cfg, stop_event)
 
-                logger.info(f"⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...")
-                time.sleep(2)
-                _remux_recording(out_dir, channel, cfg)
+                if outcome == SKIPPED:
+                    # Sofort an den laufenden Stream binden (der läuft ja noch),
+                    # damit ein ungebundener Marker nicht den nächsten Stream trifft.
+                    marker = skip.read_marker(skip_channel)
+                    if marker is not None:
+                        skip.bind(skip_channel, marker, _current_stream_id(url, cfg))
+                    time.sleep(2)
+                    # Marker inzwischen per --unskip entfernt -> Teil lieber behalten
+                    if marker is None or marker["keep"]:
+                        logger.info(f"⏹️ Aufzeichnung für {channel} abgebrochen (Skip). Remuxe bisherigen Teil...")
+                        _remux_recording(out_dir, channel, cfg)
+                    else:
+                        _discard_recording(out_dir, channel)
+                else:
+                    logger.info(f"⏹️ Aufzeichnung beendet für Kanal: {channel}. Remuxe Datei...")
+                    time.sleep(2)
+                    _remux_recording(out_dir, channel, cfg)
 
             except Exception as e:  # noqa: BLE001 - Top-Level-Boundary für den gesamten Aufnahme-Zyklus (Streamlink-Start, Monitoring, Remux); jeder Fehler hier darf den Überwachungs-Thread für diesen Kanal nicht dauerhaft beenden
                 logger.warning(f"Unerwarteter Fehler bei der Aufnahme für {channel}: {e}")
@@ -528,7 +597,12 @@ def record_loop(url: str, quality: str, stop_event: threading.Event):
             if stop_event.is_set():
                 return
 
-            if title_split_triggered:
+            if outcome == SKIPPED:
+                # Kein 30s-Wartefenster nötig: der nächste Durchlauf sieht den
+                # (jetzt gebundenen) Marker und nimmt diesen Stream nicht auf.
+                continue
+
+            if outcome == SPLIT:
                 # Stream läuft nachweislich weiter (nur Titel/Kategorie geändert) ->
                 # sofort neue Aufnahme starten, keine künstliche Pause nötig.
                 logger.info(f"▶️ Starte nächsten Aufnahme-Abschnitt für Kanal: {channel}")
