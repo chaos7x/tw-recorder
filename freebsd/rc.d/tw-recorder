@@ -60,6 +60,8 @@ start_precmd="tw_recorder_prestart"
 # als unter festem Namen im gemeinsamen /tmp.
 tw_recorder_prestart()
 {
+	# Bleibt bei stop/restart bewusst stehen (erst ein Reboot leert es):
+	# darin liegen die Skip-Marker von `tw-recorder --skip KANAL`.
 	install -d -o ${tw_recorder_runas} -m 0755 /var/run/tw-recorder
 }
 
