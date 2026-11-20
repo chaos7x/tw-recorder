@@ -263,13 +263,13 @@ class TestGetStreamInfo:
     def test_returns_title_and_category_when_live(self, twitch_api, monkeypatch):
         responses = iter([
             FakeHTTPResponse({"access_token": "TOK", "expires_in": 3600}),
-            FakeHTTPResponse({"data": [{"type": "live", "title": "Cool Stream", "game_name": "Just Chatting"}]}),
+            FakeHTTPResponse({"data": [{"type": "live", "id": "4711", "title": "Cool Stream", "game_name": "Just Chatting"}]}),
         ])
         monkeypatch.setattr(twitch_api.urllib.request, "urlopen", lambda req, timeout=5: next(responses))
 
         info = twitch_api.get_stream_info("https://twitch.tv/foo", TWITCH_CFG)
 
-        assert info == {"online": True, "title": "Cool Stream", "category": "Just Chatting"}
+        assert info == {"online": True, "title": "Cool Stream", "category": "Just Chatting", "id": "4711"}
 
     def test_returns_offline_dict_when_not_live(self, twitch_api, monkeypatch):
         responses = iter([
@@ -280,7 +280,7 @@ class TestGetStreamInfo:
 
         info = twitch_api.get_stream_info("https://twitch.tv/foo", TWITCH_CFG)
 
-        assert info == {"online": False, "title": "", "category": ""}
+        assert info == {"online": False, "title": "", "category": "", "id": ""}
 
     def test_returns_none_without_credentials(self, twitch_api):
         cfg_no_creds = {"client_id": "", "client_secret": ""}
