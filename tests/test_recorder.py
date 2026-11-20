@@ -491,9 +491,9 @@ class TestMonitorRecording:
         proc = self.FakeProc()
         cfg = {"sleep_interval": 60, "split_on_title_change": False, "title_check_interval": 60}
 
-        split, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, stop_event)
+        outcome, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, stop_event)
 
-        assert split is False
+        assert outcome == recorder.ENDED
         assert proc.terminated
 
     def test_title_change_triggers_split(self, recorder, monkeypatch):
@@ -508,7 +508,58 @@ class TestMonitorRecording:
         proc = self.FakeProc()
         cfg = {"sleep_interval": 60, "split_on_title_change": True, "title_check_interval": 0}
 
-        split, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, threading.Event())
+        outcome, _ = recorder._monitor_recording(proc, "https://twitch.tv/chan", "chan", cfg, threading.Event())
 
-        assert split is True
+        assert outcome == recorder.SPLIT
         assert proc.terminated
+
+    def test_skip_marker_terminates_process(self, recorder, skip, config, tmp_path, monkeypatch):
+        import threading
+
+        monkeypatch.setattr(config, "SKIP_DIR", tmp_path)
+        skip.write_marker("chan")
+        monkeypatch.setattr(recorder.time, "sleep", lambda s: None)
+        proc = self.FakeProc()
+        cfg = {"sleep_interval": 60, "split_on_title_change": False, "title_check_interval": 60}
+
+        outcome, _ = recorder._monitor_recording(proc, "https://twitch.tv/Chan", "Chan", cfg, threading.Event())
+
+        assert outcome == recorder.SKIPPED
+        assert proc.terminated
+
+
+class TestDiscardRecording:
+    def test_deletes_fresh_ts(self, recorder, tmp_path):
+        ts_file = tmp_path / "2026-11-20_18-00-00_chan_[Cat]_Titel.ts"
+        ts_file.write_bytes(b"x")
+
+        recorder._discard_recording(tmp_path, "chan")
+
+        assert not ts_file.exists()
+
+    def test_keeps_stale_ts_from_earlier_run(self, recorder, tmp_path):
+        ts_file = tmp_path / "old.ts"
+        ts_file.write_bytes(b"x")
+        old = ts_file.stat().st_mtime - 3600
+        os.utime(ts_file, (old, old))
+
+        recorder._discard_recording(tmp_path, "chan")
+
+        assert ts_file.exists()
+
+
+class TestSkipActive:
+    def test_no_marker_does_not_query_api(self, recorder, config, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "SKIP_DIR", tmp_path)
+        monkeypatch.setattr(recorder, "get_stream_info", lambda *a: pytest.fail("kein API-Aufruf ohne Marker"))
+
+        assert recorder._skip_active("chan", "https://twitch.tv/chan", {}) is False
+
+    def test_marker_binds_and_skips_same_stream(self, recorder, skip, config, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "SKIP_DIR", tmp_path)
+        skip.write_marker("chan")
+        monkeypatch.setattr(recorder, "get_stream_info",
+                            lambda *a: {"online": True, "title": "", "category": "", "id": "1"})
+
+        assert recorder._skip_active("chan", "https://twitch.tv/chan", {}) is True
+        assert skip.read_marker("chan")["stream_id"] == "1"

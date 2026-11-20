@@ -58,6 +58,13 @@ def _default_health_dir() -> str:
 # sie frisch genug ist - ohne Config zu laden, damit der Aufruf schnell ist
 # und keine Nebenwirkungen hat.
 HEALTH_FILE = Path(os.getenv("HEALTH_FILE", str(Path(_default_health_dir()) / "tw-recorder.health")))
+# Marker-Verzeichnis für `tw-recorder --skip` (siehe skip.py): neben der
+# Heartbeat-Datei unter /var/run/tw-recorder (tmpfs, ein Reboot leert es), im
+# Temp-Fallback mit eindeutigem Namen. Der Dämon legt es selbst an.
+SKIP_DIR = Path(os.getenv("SKIP_DIR", str(
+    Path("/var/run/tw-recorder/skip") if os.path.isdir("/var/run/tw-recorder")
+    else Path(tempfile.gettempdir()) / "tw-recorder-skip"
+)))
 # Wie alt die Heartbeat-Datei maximal sein darf, bevor --healthcheck als
 # "unhealthy" gilt. Grosszügig über dem run_daemon()-Zyklus (5s) bemessen.
 HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "60"))
